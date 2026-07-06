@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Home — sensors &amp; automation</title>
-<meta name="description" content="Smart-home dashboard: LPUs (local processing units — a CR310 datalogger today, ESP32/Arduino/RPi later) posting sensors via ThingSpeak, forecast vs actual via Open-Meteo, and a CRUD for collections, sensors, controls and setpoints.">
+<meta name="description" content="Smart-home dashboard: LPUs (local processing units — a CR310 datalogger today, ESP32 / RPi+RTL-SDR weather station / RPi camera later) posting sensors via ThingSpeak, camera stills via a JSON manifest, forecast vs actual via Open-Meteo, and a CRUD for collections, sensors, controls and setpoints.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏡</text></svg>">
 <style>
 /* ---------- design tokens (reference dataviz palette) ---------- */
@@ -92,6 +92,21 @@ nav.tabs a.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600
 .coll-head{display:flex;align-items:center;gap:8px;margin:22px 0 10px}
 .coll-head h2{font-size:1rem}
 .coll-head .ico{font-size:1.15rem}
+.cicon{width:22px;height:22px;border-radius:6px;object-fit:cover;display:block}
+/* ---------- camera / images ---------- */
+.cam-main{border-radius:8px;overflow:hidden;background:var(--page)}
+.cam-main img,.cam-main svg{display:block;width:100%;height:auto}
+.cam-cap{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:.75rem;margin-top:6px;flex-wrap:wrap}
+.cam-strip{display:flex;gap:6px;margin-top:8px;overflow-x:auto;padding-bottom:2px}
+.cam-strip button{flex:0 0 auto;width:64px;height:44px;padding:0;border:2px solid transparent;
+  border-radius:6px;overflow:hidden;background:var(--page)}
+.cam-strip button.on{border-color:var(--accent)}
+.cam-strip img{width:100%;height:100%;object-fit:cover;display:block}
+/* icon-image picker (modal forms) */
+.imgpick{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.imgpick .prev{width:44px;height:44px;border-radius:8px;border:1px solid var(--border);
+  object-fit:cover;background:var(--page)}
+.imgpick input[type=file]{width:auto;flex:1;min-width:150px}
 /* ---------- stat tiles ---------- */
 .tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));margin-bottom:14px}
 .tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 13px}
@@ -217,8 +232,8 @@ const fmtFull = t => new Date(t).toLocaleString([],{weekday:'short',day:'numeric
 
 /* ---------- config store ---------- */
 const CFG_KEY = 'homedash.config.v1';
-const KINDS = ['level','temperature','rain','voltage','pressure','humidity','other'];
-const KIND_DEC = {level:2, temperature:1, rain:1, voltage:2, pressure:1, humidity:0, other:2};
+const KINDS = ['level','temperature','rain','voltage','pressure','humidity','wind','direction','other'];
+const KIND_DEC = {level:2, temperature:1, rain:1, voltage:2, pressure:1, humidity:0, wind:1, direction:0, other:2};
 const FC_KEYS = [
   {v:'', l:'— none —'},
   {v:'temperature_2m', l:'Air temperature (2 m)'},
@@ -226,6 +241,8 @@ const FC_KEYS = [
   {v:'surface_pressure', l:'Surface pressure (station level)'},
   {v:'pressure_msl', l:'Pressure (mean sea level)'},
   {v:'precipitation', l:'Precipitation'},
+  {v:'wind_speed_10m', l:'Wind speed (10 m)'},
+  {v:'wind_gusts_10m', l:'Wind gusts (10 m)'},
 ];
 const CTRL_TYPES = [
   {v:'heater',l:'Heater'},{v:'cooler',l:'Cooler / chiller'},{v:'fan',l:'Fan / vent'},
@@ -254,7 +271,20 @@ function defaultConfig(){
           { id:'baro', name:'Barometric pressure', unit:'hPa', kind:'pressure', field:7, slot:3, decimals:1, min:null, max:null, forecastKey:'surface_pressure' },
           { id:'rh', name:'Humidity', unit:'%', kind:'humidity', field:8, slot:4, decimals:0, min:null, max:null, forecastKey:'relative_humidity_2m' },
         ], controls:[] },
-      /* a second LPU on its own channel — demo data until the real ESP32 is online;
+      /* a second LPU on its own channel — a Raspberry Pi with an RTL-SDR listening to
+         the 433 MHz consumer weather station (Digitech XC0434) and a camera taking
+         stills. Demo data / placeholder image until the Pi is online — then swap the
+         channel override for its real channel ID and set the camera manifest URL. */
+      { id:'backyard', name:'Backyard station · RPi + RTL-SDR (future LPU)', icon:'📡',
+        camera:{ manifestUrl:'demo-rpi-cam', label:'Backyard camera' },
+        sensors:[
+          { id:'wsT',    name:'Outdoor temperature', unit:'°C',  kind:'temperature', field:1, slot:1, decimals:1, min:null, max:null, forecastKey:'temperature_2m', channelId:'demo-rtl433' },
+          { id:'wsRH',   name:'Outdoor humidity',    unit:'%',   kind:'humidity',    field:2, slot:2, decimals:0, min:null, max:null, forecastKey:'',               channelId:'demo-rtl433' },
+          { id:'wsWind', name:'Wind speed',          unit:'m/s', kind:'wind',        field:3, slot:3, decimals:1, min:null, max:null, forecastKey:'wind_speed_10m', channelId:'demo-rtl433' },
+          { id:'wsGust', name:'Wind gust',           unit:'m/s', kind:'wind',        field:4, slot:4, decimals:1, min:null, max:null, forecastKey:'wind_gusts_10m', channelId:'demo-rtl433' },
+          { id:'wsDir',  name:'Wind direction',      unit:'°',   kind:'direction',   field:5, slot:5, decimals:0, min:null, max:null, forecastKey:'',               channelId:'demo-rtl433' },
+        ], controls:[] },
+      /* a third LPU on its own channel — demo data until the real ESP32 is online;
          swap the channel override for its real channel ID when it is */
       { id:'mushroom', name:'Mushroom house · ESP32 (future LPU)', icon:'🍄', sensors:[
           { id:'musht', name:'Grow-room temperature', unit:'°C', kind:'temperature', field:1, slot:1, decimals:1, min:16, max:26, forecastKey:'', channelId:'demo-esp32' },
@@ -300,8 +330,9 @@ const demoMode = () => config.settings.forceDemo || !config.settings.thingspeak.
 
 /* ---------- demo data (deterministic, so the page works before wiring) ---------- */
 /* each LPU posts to its own channel; the demo packs them into one row:
-   f[0..7] = CR310 channel fields 1–8, f[8..10] = demo ESP32 channel fields 1–3 */
-const DEMO_LPU_OFFSET = { '': 0, 'demo-esp32': 8 };
+   f[0..7] = CR310 channel fields 1–8, f[8..10] = demo ESP32 channel fields 1–3,
+   f[11..15] = demo RPi+RTL-SDR weather-station channel fields 1–5 */
+const DEMO_LPU_OFFSET = { '': 0, 'demo-esp32': 8, 'demo-rtl433': 11 };
 function n01(seed){ const x = Math.sin(seed*127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
 function genDemoRows(days, extraDays){
   const step = 15*60000, now = Date.now();
@@ -326,11 +357,19 @@ function genDemoRows(days, extraDays){
     const mushT  = 20.8 + 0.9*Math.sin(t/36e5/4*2*Math.PI) + 0.5*diurnal + (n01(k+17)-.5)*.6;
     const mushRH = clamp(88 + 3.5*Math.sin(t/36e5/6*2*Math.PI) + (n01(k+19)-.5)*3, 70, 99);
     const mushCO2= 780 + 220*Math.sin(t/36e5/3*2*Math.PI + n01(day+5)*3) + (n01(k+23)-.5)*80;
-    rows.push({ t, f:[tank1, tank2, rain, batt, panelT, airT, baro, rh, mushT, mushRH, mushCO2] });
+    /* demo RPi+RTL-SDR LPU: the 433 MHz weather station in the backyard */
+    const wsT  = airT - 0.4 + (n01(k+41)-.5)*0.6;
+    const wsRH = clamp(rh + 2 + (n01(k+43)-.5)*4, 25, 98);
+    const wAvg = Math.max(0, 1.6 + 2.4*Math.max(0,diurnal) + 1.6*(n01(day+21)-.5)*2 + (n01(k+31)-.5)*1.2);
+    const wGust= wAvg<=0 ? 0 : wAvg*1.5 + n01(k+37)*2.2;
+    const wDir = (200 + 130*Math.sin(t/864e5/2.5*2*Math.PI) + 60*(n01(k+29)-.5)*2 + 720) % 360;
+    rows.push({ t, f:[tank1, tank2, rain, batt, panelT, airT, baro, rh, mushT, mushRH, mushCO2,
+                      wsT, wsRH, wAvg, wGust, wDir] });
   }
   return rows;
 }
-const FC_FIELD = { temperature_2m:6, relative_humidity_2m:8, surface_pressure:7, pressure_msl:7, precipitation:3 };
+const FC_FIELD = { temperature_2m:6, relative_humidity_2m:8, surface_pressure:7, pressure_msl:7,
+  precipitation:3, wind_speed_10m:14, wind_gusts_10m:15 };
 function demoForecast(keys){
   const rows = genDemoRows(3, 4);            /* hourly grid from 15-min demo rows */
   const byKey = {};
@@ -436,7 +475,8 @@ async function refreshForecast(){
       return;
     }
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`
-      + `&hourly=${keys.join(',')}&past_days=3&forecast_days=5&timeformat=unixtime&timezone=auto`;
+      + `&hourly=${keys.join(',')}&past_days=3&forecast_days=5&timeformat=unixtime&timezone=auto`
+      + `&wind_speed_unit=ms`; /* match the m/s the weather-station LPU reports */
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Open-Meteo HTTP ${res.status}`);
     const json = await res.json();
@@ -450,6 +490,100 @@ async function refreshForecast(){
   } catch(e){
     state.forecast = { byKey:{}, fetchedAt: Date.now(), error: e.message || String(e) };
   }
+}
+
+/* ---------- image layer: time-lapse stills per collection ----------
+   A camera LPU (e.g. RPi + camera module) publishes stills anywhere static +
+   CORS-readable (a GitHub repo via raw.githubusercontent.com or Pages works)
+   plus a manifest.json listing them:
+     { "images": [ { "file": "2026-07-06T08-00-00.jpg", "t": "2026-07-06T08:00:00+10:00" }, … ] }
+   `file` is resolved relative to the manifest URL (absolute URLs also fine).
+   Non-http(s) manifest values (e.g. "demo-rpi-cam") are placeholders, same
+   convention as channel overrides for LPUs that aren't online yet. */
+const IMG_TTL = 60000;
+const imgCache = new Map(); /* collection id -> {fetchedAt, entries, error} */
+async function loadImages(coll){
+  const cached = imgCache.get(coll.id);
+  if (cached && Date.now()-cached.fetchedAt < IMG_TTL){
+    if (cached.error) throw new Error(cached.error);
+    return cached.entries;
+  }
+  try {
+    const res = await fetch(coll.camera.manifestUrl, {cache:'no-store'});
+    if (!res.ok) throw new Error(`manifest HTTP ${res.status}`);
+    const json = await res.json();
+    const list = Array.isArray(json) ? json : json.images;
+    if (!Array.isArray(list)) throw new Error('manifest: expected {"images":[…]}');
+    const entries = list.map(e=>({
+      url: new URL(e.file || e.url, res.url || coll.camera.manifestUrl).href,
+      t: e.t ? Date.parse(e.t) : null,
+    })).filter(e=>e.url);
+    entries.sort((a,b)=>(a.t||0)-(b.t||0));
+    imgCache.set(coll.id, {fetchedAt:Date.now(), entries});
+    return entries;
+  } catch(e){
+    imgCache.set(coll.id, {fetchedAt:Date.now(), entries:[], error:e.message||String(e)});
+    throw e;
+  }
+}
+function cameraCard(coll){
+  const cam = coll.camera;
+  const placeholder = !/^https?:\/\//i.test(cam.manifestUrl||'');
+  const body = el('div',{});
+  const card = el('section',{class:'card'},
+    el('div',{class:'card-head'}, el('h3',{},'📷 '+(cam.label||'Camera')),
+      el('span',{class:'card-sub'}, placeholder ? 'placeholder — set the manifest URL in Manage' : 'time-lapse stills')),
+    body);
+  if (placeholder){
+    body.append(demoCameraScene(coll),
+      el('p',{class:'help'},'Stills from a camera LPU land here once it publishes a manifest — edit this collection in ',
+        el('a',{href:'#manage'},'Manage'),' and set the manifest URL (publisher script + format in the README).'));
+    return card;
+  }
+  body.append(el('div',{class:'empty'},'Loading images…'));
+  loadImages(coll)
+    .then(entries=>{ body.textContent=''; paintCamera(body, cam, entries); })
+    .catch(e=>{ body.textContent='';
+      body.append(el('div',{class:'empty'},'⚠ Images unavailable: '+(e.message||e))); });
+  return card;
+}
+function paintCamera(body, cam, entries){
+  if (!entries.length){ body.append(el('div',{class:'empty'},'Manifest loaded, but it lists no images yet.')); return; }
+  const recent = entries.slice(-8);
+  const img = el('img',{alt:cam.label||'camera still'});
+  const cap = el('span',{});
+  const link = el('a',{target:'_blank', rel:'noopener'},'open full size');
+  const strip = el('div',{class:'cam-strip'});
+  function show(i){
+    const e = recent[i];
+    img.src = e.url; link.href = e.url;
+    cap.textContent = e.t ? fmtFull(e.t) : '(no timestamp)';
+    [...strip.children].forEach((b,bi)=>b.classList.toggle('on', bi===i));
+  }
+  recent.forEach((e,i)=>strip.append(
+    el('button',{title:e.t?fmtFull(e.t):'', onclick:()=>show(i)},
+      el('img',{src:e.url, alt:'', loading:'lazy'}))));
+  body.append(el('div',{},
+    el('div',{class:'cam-main'}, img),
+    el('div',{class:'cam-cap'}, cap, link),
+    recent.length>1 ? strip : null));
+  show(recent.length-1);
+}
+function demoCameraScene(coll){
+  /* a generated "photo" so the card is explorable before any hardware exists */
+  const w=640, h=280, gid='sky-'+coll.id;
+  const grad = svgEl('linearGradient',{id:gid, x1:0,y1:0,x2:0,y2:1},
+    svgEl('stop',{offset:'0%','stop-color':'#6ea9e0'}),
+    svgEl('stop',{offset:'100%','stop-color':'#d9ecff'}));
+  return el('div',{class:'cam-main'},
+    svgEl('svg',{viewBox:`0 0 ${w} ${h}`, role:'img','aria-label':'Placeholder camera still'},
+      svgEl('defs',{}, grad),
+      svgEl('rect',{x:0,y:0,width:w,height:h,fill:`url(#${gid})`}),
+      svgEl('circle',{cx:520,cy:64,r:32,fill:'#ffd76a'}),
+      svgEl('path',{d:`M0 ${h}L0 190Q160 138 320 188T${w} 176L${w} ${h}Z`,fill:'#6fa06b'}),
+      svgEl('path',{d:`M0 ${h}L0 232Q220 200 430 234T${w} 222L${w} ${h}Z`,fill:'#4c7d49'}),
+      svgEl('text',{x:16,y:h-14,'font-size':13,fill:'#fff','font-family':'system-ui'},
+        'demo still — images from your RPi camera appear here')));
 }
 
 /* ---------- series helpers ---------- */
@@ -813,6 +947,11 @@ function renderSrcBadge(){
     b.append(el('span',{class:'badge demo',title:'No ThingSpeak channel configured — showing generated demo data for every LPU. Set your channel in Settings.'},'◌ demo data'));
 }
 function sensorColor(s){ return cssVar('--s'+(clamp(s.slot||1,1,8))); }
+function collIcon(coll){
+  /* a pasted/uploaded image (data URI in config) beats the emoji */
+  return coll.iconImg ? el('img',{class:'cicon', src:coll.iconImg, alt:''})
+                      : el('span',{class:'ico'}, coll.icon||'📦');
+}
 
 /* ---------- dashboard ---------- */
 function renderDashboard(){
@@ -836,7 +975,7 @@ function renderDashboard(){
   const now=Date.now(), rangeDays=RANGES[state.range].days;
   for (const coll of config.collections){
     view.append(el('div',{class:'coll-head'},
-      el('span',{class:'ico'},coll.icon||'📦'), el('h2',{},coll.name)));
+      collIcon(coll), el('h2',{},coll.name)));
     /* tiles */
     const tiles=el('div',{class:'tiles'});
     for (const s of coll.sensors){
@@ -878,6 +1017,8 @@ function renderDashboard(){
     }
     /* charts: one unit → one axis → one chart; rain gets its own totals chart */
     const grid=el('div',{class:'grid'});
+    /* camera stills first, when the collection has one */
+    if (coll.camera && coll.camera.manifestUrl) grid.append(cameraCard(coll));
     const rain=coll.sensors.filter(s=>s.kind==='rain');
     const rest=coll.sensors.filter(s=>s.kind!=='rain');
     const byUnit=new Map();
@@ -890,7 +1031,7 @@ function renderDashboard(){
       grid.append(chartCard({
         title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
         sub: unit, series,
-        renderChart: b=>drawLineChart(b,{series,unit,dec,includeZero:ss[0].kind==='level'}),
+        renderChart: b=>drawLineChart(b,{series,unit,dec,includeZero:ss[0].kind==='level'||ss[0].kind==='wind'}),
         renderTable: ()=>seriesTable(series,unit,dec),
       }));
     }
@@ -996,7 +1137,8 @@ function renderManage(){
   config.collections.forEach((coll,ci)=>{
     const card=el('section',{class:'card'});
     card.append(el('div',{class:'card-head'},
-      el('span',{class:'ico'},coll.icon||'📦'), el('h3',{},coll.name),
+      collIcon(coll), el('h3',{},coll.name),
+      coll.camera?.manifestUrl ? el('span',{class:'mi'},'📷 '+(coll.camera.label||'camera')) : null,
       el('div',{class:'spacer'}),
       el('button',{class:'ghost',title:'Move up',onclick:()=>{ if(ci>0){ const a=config.collections;
         [a[ci-1],a[ci]]=[a[ci],a[ci-1]]; saveConfig(); render(); } }},'↑'),
@@ -1081,6 +1223,25 @@ function openForm(title, fields, values, onSave){
   for (const f of fields){
     const v=values?.[f.key];
     let inp;
+    if (f.type==='image'){
+      /* stored as a data URI in a hidden input; set via file upload or paste */
+      inp=el('input',{type:'hidden',name:f.key,value:v||''});
+      const prev=el('img',{class:'prev',alt:'',src:v||''});
+      if (!v) prev.style.display='none';
+      const file=el('input',{type:'file',accept:'image/*'});
+      const set=url=>{ inp.value=url; prev.src=url; prev.style.display=''; };
+      file.addEventListener('change',()=>{ if (file.files[0]) shrinkImage(file.files[0],96,set); });
+      form.addEventListener('paste',e=>{
+        const it=[...(e.clipboardData?.items||[])].find(i=>i.type.startsWith('image/'));
+        if (it){ e.preventDefault(); shrinkImage(it.getAsFile(),96,set); }
+      });
+      form.append(el('div',{}, el('label',{},f.label),
+        el('div',{class:'imgpick'}, prev, file,
+          el('button',{class:'ghost',type:'button',onclick:()=>{
+            inp.value=''; prev.style.display='none'; file.value=''; }},'Clear')),
+        inp, f.help?el('p',{class:'help'},f.help):null));
+      continue;
+    }
     if (f.type==='select') inp=el('select',{name:f.key},
       f.options.map(o=>{ const opt=el('option',{value:o.v},o.l); if (String(v??'')===String(o.v)) opt.selected=true; return opt; }));
     else if (f.type==='checkbox') inp=el('input',{type:'checkbox',name:f.key});
@@ -1097,14 +1258,48 @@ function openForm(title, fields, values, onSave){
   modalBg.classList.add('open');
   const first=form.querySelector('input,select'); if (first) first.focus();
 }
+function shrinkImage(file, max, cb){
+  /* icons live inside the config (localStorage / JSON export), so shrink hard */
+  const url=URL.createObjectURL(file);
+  const img=new Image();
+  img.onload=()=>{
+    const sc=Math.min(1, max/Math.max(img.width,img.height));
+    const c=document.createElement('canvas');
+    c.width=Math.max(1,Math.round(img.width*sc));
+    c.height=Math.max(1,Math.round(img.height*sc));
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    URL.revokeObjectURL(url);
+    cb(c.toDataURL('image/png'));
+  };
+  img.onerror=()=>{ URL.revokeObjectURL(url); alert('Could not read that image.'); };
+  img.src=url;
+}
 function collectionForm(coll){
   openForm(coll?'Edit collection':'New collection',[
     {key:'name',label:'Name',placeholder:'e.g. Mushroom house'},
     {key:'icon',label:'Icon (emoji)',placeholder:'🍄'},
-  ], coll||{icon:'📦'}, out=>{
+    {key:'iconImg',label:'Icon image (optional — overrides the emoji)',type:'image',
+      help:'Upload or paste (Ctrl/⌘+V) any image; it is shrunk to 96 px and stored with the config.'},
+    {key:'camUrl',label:'Camera — image manifest URL (optional)',
+      placeholder:'https://…/manifest.json (or demo-rpi-cam for a placeholder)',
+      help:'Stills published by a camera LPU. Non-http values act as placeholders until that LPU is online. Manifest format + publisher script: README → Camera images.'},
+    {key:'camLabel',label:'Camera label (optional)',placeholder:'e.g. Backyard camera'},
+  ], coll ? { name:coll.name, icon:coll.icon, iconImg:coll.iconImg||'',
+              camUrl:coll.camera?.manifestUrl||'', camLabel:coll.camera?.label||'' }
+          : { icon:'📦' },
+  out=>{
     if (!out.name) return false;
-    if (coll){ coll.name=out.name; coll.icon=out.icon||'📦'; }
-    else config.collections.push({id:uid(),name:out.name,icon:out.icon||'📦',sensors:[],controls:[]});
+    const camera = out.camUrl ? { manifestUrl:out.camUrl, label:out.camLabel } : null;
+    if (coll){
+      coll.name=out.name; coll.icon=out.icon||'📦';
+      coll.iconImg=out.iconImg||null;
+      if (camera) coll.camera=camera; else delete coll.camera;
+      imgCache.delete(coll.id);
+    } else {
+      config.collections.push(Object.assign(
+        {id:uid(), name:out.name, icon:out.icon||'📦', iconImg:out.iconImg||null,
+         sensors:[], controls:[]}, camera?{camera}:{}));
+    }
   });
 }
 function sensorForm(coll,s){
