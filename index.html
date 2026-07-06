@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Home — sensors &amp; automation</title>
-<meta name="description" content="Smart-home dashboard: CR310 datalogger sensors via ThingSpeak, forecast vs actual via Open-Meteo, and a CRUD for collections, sensors, controls and setpoints.">
+<meta name="description" content="Smart-home dashboard: LPUs (local processing units — a CR310 datalogger today, ESP32/Arduino/RPi later) posting sensors via ThingSpeak, forecast vs actual via Open-Meteo, and a CRUD for collections, sensors, controls and setpoints.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏡</text></svg>">
 <style>
 /* ---------- design tokens (reference dataviz palette) ---------- */
@@ -175,7 +175,9 @@ table.data td{padding:4px 10px;text-align:right;font-variant-numeric:tabular-num
 'use strict';
 /* =====================================================================
    Home dashboard — single-file app.
-   Data: ThingSpeak channel (CR310 posts to it) · Forecast: Open-Meteo.
+   Data: ThingSpeak, one channel per LPU (local processing unit — the CR310
+   datalogger today; ESP32 / Arduino UNO / RPi units join later, each carrying
+   several sensors) · Forecast: Open-Meteo.
    Config (collections / sensors / controls / setpoints): localStorage.
    ===================================================================== */
 
@@ -252,7 +254,17 @@ function defaultConfig(){
           { id:'baro', name:'Barometric pressure', unit:'hPa', kind:'pressure', field:7, slot:3, decimals:1, min:null, max:null, forecastKey:'surface_pressure' },
           { id:'rh', name:'Humidity', unit:'%', kind:'humidity', field:8, slot:4, decimals:0, min:null, max:null, forecastKey:'relative_humidity_2m' },
         ], controls:[] },
-      { id:'logger', name:'Logger health', icon:'🔋', sensors:[
+      /* a second LPU on its own channel — demo data until the real ESP32 is online;
+         swap the channel override for its real channel ID when it is */
+      { id:'mushroom', name:'Mushroom house · ESP32 (future LPU)', icon:'🍄', sensors:[
+          { id:'musht', name:'Grow-room temperature', unit:'°C', kind:'temperature', field:1, slot:1, decimals:1, min:16, max:26, forecastKey:'', channelId:'demo-esp32' },
+          { id:'mushrh', name:'Humidity', unit:'%', kind:'humidity', field:2, slot:2, decimals:0, min:70, max:null, forecastKey:'', channelId:'demo-esp32' },
+          { id:'mushco2', name:'CO₂', unit:'ppm', kind:'other', field:3, slot:3, decimals:0, min:null, max:1500, forecastKey:'', channelId:'demo-esp32' },
+        ], controls:[
+          { id:'mushheat', name:'Heat mat', type:'heater', sensorId:'musht', mode:'auto', action:'raise', setpoint:21, hysteresis:1, enabled:true },
+          { id:'mushhum', name:'Humidifier', type:'humidifier', sensorId:'mushrh', mode:'auto', action:'raise', setpoint:88, hysteresis:4, enabled:true },
+        ] },
+      { id:'logger', name:'LPU health · CR310', icon:'🔋', sensors:[
           { id:'batt', name:'Battery', unit:'V', kind:'voltage', field:4, slot:1, decimals:2, min:11.5, max:15, forecastKey:'' },
           { id:'ptemp', name:'Panel temperature', unit:'°C', kind:'temperature', field:5, slot:2, decimals:1, min:null, max:null, forecastKey:'' },
         ], controls:[] },
@@ -287,6 +299,9 @@ let state = {
 const demoMode = () => config.settings.forceDemo || !config.settings.thingspeak.channelId;
 
 /* ---------- demo data (deterministic, so the page works before wiring) ---------- */
+/* each LPU posts to its own channel; the demo packs them into one row:
+   f[0..7] = CR310 channel fields 1–8, f[8..10] = demo ESP32 channel fields 1–3 */
+const DEMO_LPU_OFFSET = { '': 0, 'demo-esp32': 8 };
 function n01(seed){ const x = Math.sin(seed*127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
 function genDemoRows(days, extraDays){
   const step = 15*60000, now = Date.now();
@@ -307,7 +322,11 @@ function genDemoRows(days, extraDays){
     const rain  = storm ? +(n01(k+13)*1.9).toFixed(1) : 0;
     tank1 = clamp(tank1 - 0.0011 + rain*0.004 , 0.25, 2.95);
     tank2 = clamp(tank2 - 0.0007 + rain*0.0032, 0.20, 2.45);
-    rows.push({ t, f:[tank1, tank2, rain, batt, panelT, airT, baro, rh] });
+    /* demo ESP32 LPU (mushroom house): a controlled space, so values hug their setpoints */
+    const mushT  = 20.8 + 0.9*Math.sin(t/36e5/4*2*Math.PI) + 0.5*diurnal + (n01(k+17)-.5)*.6;
+    const mushRH = clamp(88 + 3.5*Math.sin(t/36e5/6*2*Math.PI) + (n01(k+19)-.5)*3, 70, 99);
+    const mushCO2= 780 + 220*Math.sin(t/36e5/3*2*Math.PI + n01(day+5)*3) + (n01(k+23)-.5)*80;
+    rows.push({ t, f:[tank1, tank2, rain, batt, panelT, airT, baro, rh, mushT, mushRH, mushCO2] });
   }
   return rows;
 }
@@ -346,42 +365,51 @@ async function refreshData(){
       const rows = genDemoRows(range.days, 0);
       for (const s of allSensors()){
         if (!s.field) continue;
-        bySensor.set(s.id, rows.map(r => [r.t, +r.f[s.field-1].toFixed(3)]));
+        const idx = (DEMO_LPU_OFFSET[s.channelId||''] ?? 0) + s.field - 1;
+        const pts = [];
+        for (const r of rows){ const v = r.f[idx]; if (v!=null) pts.push([r.t, +v.toFixed(3)]); }
+        bySensor.set(s.id, pts);
       }
     } else {
       const ts = config.settings.thingspeak;
-      /* group sensors by channel (per-sensor override supported for future subsystems) */
+      /* group sensors by channel — one channel per LPU (per-sensor override) */
       const groups = new Map();
       for (const s of allSensors()){
         if (!s.field) continue;
         const ch = (s.channelId || ts.channelId), key = (s.channelId ? (s.readKey||'') : (ts.readKey||''));
-        if (!ch) continue;
+        /* non-numeric channel ids are placeholders for LPUs not online yet — skip */
+        if (!ch || !/^\d+$/.test(String(ch))) continue;
         const gk = ch + '|' + key;
         if (!groups.has(gk)) groups.set(gk, { ch, key, sensors:[] });
         groups.get(gk).sensors.push(s);
       }
+      const errs = [];
       for (const g of groups.values()){
-        let url = `https://api.thingspeak.com/channels/${encodeURIComponent(g.ch)}/feeds.json?days=${range.days}`;
-        if (range.avg) url += `&average=${range.avg}`;
-        if (g.key) url += `&api_key=${encodeURIComponent(g.key)}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`ThingSpeak HTTP ${res.status} (channel ${g.ch})`);
-        const json = await res.json();
-        if (json === -1 || !json.feeds) throw new Error(`Channel ${g.ch}: not found or read key required`);
-        const interval = Math.max(1, +ts.uploadIntervalMin || 5);
-        for (const s of g.sensors){
-          const pts = [];
-          /* with &average=N ThingSpeak returns the mean of the interval samples,
-             so tipping-bucket totals are rebuilt as mean × (samples per bucket) */
-          const rainScale = (s.kind==='rain' && range.avg) ? range.avg/interval : 1;
-          for (const row of json.feeds){
-            const t = Date.parse(row.created_at);
-            const v = parseFloat(row['field'+s.field]);
-            if (isFinite(t) && isFinite(v)) pts.push([t, v*rainScale]);
+        /* per-LPU fetch: one channel failing must not blank the other LPUs */
+        try {
+          let url = `https://api.thingspeak.com/channels/${encodeURIComponent(g.ch)}/feeds.json?days=${range.days}`;
+          if (range.avg) url += `&average=${range.avg}`;
+          if (g.key) url += `&api_key=${encodeURIComponent(g.key)}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`ThingSpeak HTTP ${res.status} (channel ${g.ch})`);
+          const json = await res.json();
+          if (json === -1 || !json.feeds) throw new Error(`Channel ${g.ch}: not found or read key required`);
+          const interval = Math.max(1, +ts.uploadIntervalMin || 5);
+          for (const s of g.sensors){
+            const pts = [];
+            /* with &average=N ThingSpeak returns the mean of the interval samples,
+               so tipping-bucket totals are rebuilt as mean × (samples per bucket) */
+            const rainScale = (s.kind==='rain' && range.avg) ? range.avg/interval : 1;
+            for (const row of json.feeds){
+              const t = Date.parse(row.created_at);
+              const v = parseFloat(row['field'+s.field]);
+              if (isFinite(t) && isFinite(v)) pts.push([t, v*rainScale]);
+            }
+            bySensor.set(s.id, pts);
           }
-          bySensor.set(s.id, pts);
-        }
+        } catch(e){ errs.push(e.message || String(e)); }
       }
+      if (errs.length) error = errs.join(' · ');
     }
   } catch(e){ error = e.message || String(e); }
   state.data = { bySensor, fetchedAt: Date.now(), source, error };
@@ -782,7 +810,7 @@ function renderSrcBadge(){
   const b=document.getElementById('src-badge'); b.textContent='';
   if (state.data.error) b.append(el('span',{class:'badge err',title:state.data.error},'⚠ data error'));
   else if (state.data.source==='demo')
-    b.append(el('span',{class:'badge demo',title:'No ThingSpeak channel configured — showing generated demo data. Set your channel in Settings.'},'◌ demo data'));
+    b.append(el('span',{class:'badge demo',title:'No ThingSpeak channel configured — showing generated demo data for every LPU. Set your channel in Settings.'},'◌ demo data'));
 }
 function sensorColor(s){ return cssVar('--s'+(clamp(s.slot||1,1,8))); }
 
@@ -922,7 +950,7 @@ function renderForecastView(){
   }
   const src = state.forecast.demo ? 'demo forecast' : 'Open-Meteo';
   view.append(el('div',{class:'filters'},
-    el('span',{class:'meta'},`Solid = measured (CR310) · dashed = forecast (${src}) · window: past 3 days → next 4 days`),
+    el('span',{class:'meta'},`Solid = measured (LPU sensors) · dashed = forecast (${src}) · window: past 3 days → next 4 days`),
     el('div',{class:'spacer'}),
     el('button',{class:'btn',onclick:async()=>{ await refreshForecast(); render(); }},'↻ Refresh')));
   if (state.forecast.error && state.forecast.error!=='no-location')
@@ -1024,7 +1052,7 @@ function renderManage(){
   });
   view.append(el('div',{class:'card'},el('p',{class:'note'},
     'Controls here are configuration for now: the dashboard shows what each one ',
-    el('em',{},'would'),' do against live readings. Actuation (relays / valves on the CR310) arrives via the ThingSpeak TalkBack queue — the logger polls for commands, so no port-forwarding. See the README roadmap.')));
+    el('em',{},'would'),' do against live readings. Actuation (relays / valves wired to each LPU — SW12 ports on the CR310, GPIO relays on an ESP32 / Arduino / RPi) arrives via a ThingSpeak TalkBack queue per LPU — each unit polls for commands, so no port-forwarding. See the README roadmap.')));
 }
 
 /* ---------- modal forms ---------- */
@@ -1091,7 +1119,7 @@ function sensorForm(coll,s){
     {key:'forecastKey',label:'Forecast variable (Open-Meteo)',type:'select',options:FC_KEYS,
       help:'Map this to plot forecast vs actual on one chart.'},
     {key:'channelId',label:'Channel override (optional)',placeholder:'Leave blank to use the default channel',
-      help:'For future subsystems on their own ThingSpeak channels.'},
+      help:'Each LPU posts to its own channel — set this when the sensor lives on a different LPU than the default. Non-numeric values (e.g. demo-esp32) act as placeholders until that LPU is online.'},
     {key:'readKey',label:'Read key for that channel (optional)'},
   ], s||{kind:'temperature',decimals:1}, out=>{
     if (!out.name||!out.field) return false;
@@ -1134,10 +1162,10 @@ function renderSettings(){
   const chDemo=el('input',{type:'checkbox'}); chDemo.checked=!!config.settings.forceDemo;
   grid.append(el('section',{class:'card'},
     el('h3',{},'Data source — ThingSpeak'),
-    el('p',{class:'help'},'The CR310 posts to a ThingSpeak channel over plain HTTPS — free tier, no port forwarding. Setup steps are in the README.'),
-    el('label',{},'Channel ID'), chId,
+    el('p',{class:'help'},'Each LPU (local processing unit — the CR310 datalogger today; ESP32 / Arduino / RPi units later) posts to its own ThingSpeak channel over plain HTTPS — free tier, no port forwarding. This is the default channel (LPU 1); sensors on other LPUs use the per-sensor channel override in Manage. Setup steps are in the README.'),
+    el('label',{},'Default channel ID'), chId,
     el('label',{},'Read API key'), chKey,
-    el('label',{},'Logger upload interval (minutes)'), chInt,
+    el('label',{},'Upload interval (minutes)'), chInt,
     el('p',{class:'help'},'Used to rebuild rain totals when long ranges are served as hourly averages.'),
     el('label',{},el('span',{},'Force demo data ')), chDemo,
     el('div',{class:'actions',style:'margin-top:14px'},
