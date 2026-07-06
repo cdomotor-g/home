@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home — sensors &amp; automation</title>
+<meta name="description" content="Smart-home dashboard: CR310 datalogger sensors via ThingSpeak, forecast vs actual via Open-Meteo, and a CRUD for collections, sensors, controls and setpoints.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏡</text></svg>">
+<style>
+/* ---------- design tokens (reference dataviz palette) ---------- */
+:root{
+  --page:#f9f9f7; --surface:#fcfcfb;
+  --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --s1:#2a78d6; --s2:#1baf7a; --s3:#eda100; --s4:#008300;
+  --s5:#4a3aa7; --s6:#e34948; --s7:#e87ba4; --s8:#eb6834;
+  --good:#0ca30c; --good-text:#006300; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+  --accent:#2a78d6; --tint:rgba(42,120,214,.10);
+}
+:root[data-theme="dark"]{
+  --page:#0d0d0d; --surface:#1a1a19;
+  --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#199e70; --s3:#c98500; --s4:#008300;
+  --s5:#9085e9; --s6:#e66767; --s7:#d55181; --s8:#d95926;
+  --good-text:#0ca30c; --accent:#3987e5; --tint:rgba(57,135,229,.14);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --page:#0d0d0d; --surface:#1a1a19;
+    --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#199e70; --s3:#c98500; --s4:#008300;
+    --s5:#9085e9; --s6:#e66767; --s7:#d55181; --s8:#d95926;
+    --good-text:#0ca30c; --accent:#3987e5; --tint:rgba(57,135,229,.14);
+  }
+}
+/* ---------- base ---------- */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--page);color:var(--ink);
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+h1,h2,h3{margin:0;font-weight:600}
+button{font:inherit;color:inherit;cursor:pointer}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--page);
+  border:1px solid var(--border);border-radius:6px;padding:6px 8px;width:100%}
+input:focus-visible,select:focus-visible,button:focus-visible,[tabindex]:focus-visible{
+  outline:2px solid var(--accent);outline-offset:1px}
+label{display:block;font-size:.8rem;color:var(--ink2);margin:10px 0 3px}
+.help{font-size:.75rem;color:var(--muted);margin:2px 0 0}
+.wrap{max-width:1150px;margin:0 auto;padding:0 16px 48px}
+/* ---------- header & nav ---------- */
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:18px 0 4px}
+header h1{font-size:1.15rem}
+header .sub{color:var(--muted);font-size:.8rem}
+.spacer{flex:1}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;
+  padding:2px 9px;border-radius:999px;border:1px solid var(--border)}
+.badge.demo{background:rgba(250,178,25,.14);border-color:rgba(250,178,25,.5)}
+.badge.err{background:rgba(208,59,59,.12);border-color:rgba(208,59,59,.5)}
+nav.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);
+  margin:10px 0 16px;overflow-x:auto}
+nav.tabs a{color:var(--ink2);text-decoration:none;padding:8px 13px;font-size:.88rem;
+  border-bottom:2px solid transparent;white-space:nowrap}
+nav.tabs a.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+/* ---------- filter row ---------- */
+.filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.seg button{background:none;border:none;padding:6px 12px;font-size:.82rem;color:var(--ink2)}
+.seg button.on{background:var(--tint);color:var(--ink);font-weight:600}
+.filters .meta{color:var(--muted);font-size:.75rem}
+/* ---------- buttons ---------- */
+.btn{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:6px 12px;font-size:.82rem}
+.btn:hover{background:var(--tint)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--crit)}
+.ghost{background:none;border:none;border-radius:6px;padding:4px 8px;
+  font-size:.78rem;color:var(--ink2)}
+.ghost:hover{background:var(--tint);color:var(--ink)}
+/* ---------- cards & layout ---------- */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:14px 16px;margin:0 0 14px}
+.card-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.card-head h3{font-size:.92rem}
+.card-sub{color:var(--muted);font-size:.75rem}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.grid > .card{margin:0}
+.coll-head{display:flex;align-items:center;gap:8px;margin:22px 0 10px}
+.coll-head h2{font-size:1rem}
+.coll-head .ico{font-size:1.15rem}
+/* ---------- stat tiles ---------- */
+.tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));margin-bottom:14px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 13px}
+.tile .lbl{font-size:.75rem;color:var(--ink2)}
+.tile .val{font-size:1.45rem;font-weight:600;margin:2px 0 0}
+.tile .val .unit{font-size:.8rem;font-weight:400;color:var(--muted);margin-left:3px}
+.tile .delta{font-size:.75rem;color:var(--ink2);margin-top:1px}
+.tile .delta.up{color:var(--good-text)} .tile .delta.down{color:var(--crit)}
+.tile .status{font-size:.75rem;font-weight:600;margin-top:1px}
+.tile svg{display:block;margin-top:6px}
+/* ---------- charts ---------- */
+.chart-body{position:relative}
+.chart-body svg{display:block;width:100%;height:auto}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin:2px 0 4px;font-size:.78rem;color:var(--ink2)}
+.legend .key{display:inline-flex;align-items:center;gap:6px}
+.empty{color:var(--muted);font-size:.82rem;padding:22px 4px}
+.stale{opacity:.6;transition:opacity .2s}
+/* tooltip */
+#tip{position:fixed;display:none;z-index:60;background:var(--surface);
+  border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);
+  padding:8px 11px;font-size:.78rem;pointer-events:none;max-width:260px}
+#tip .t-head{color:var(--muted);margin-bottom:4px}
+#tip .t-row{display:flex;align-items:center;gap:7px;margin:2px 0}
+#tip .t-row .v{font-weight:600;font-variant-numeric:tabular-nums}
+#tip .t-row .n{color:var(--ink2)}
+/* data tables */
+.tbl-wrap{max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px}
+table.data{border-collapse:collapse;width:100%;font-size:.78rem}
+table.data th{position:sticky;top:0;background:var(--surface);color:var(--muted);
+  font-weight:500;text-align:right;padding:6px 10px;border-bottom:1px solid var(--border)}
+table.data th:first-child,table.data td:first-child{text-align:left}
+table.data td{padding:4px 10px;text-align:right;font-variant-numeric:tabular-nums;
+  border-bottom:1px solid var(--grid)}
+/* ---------- manage view ---------- */
+.mrow{display:flex;align-items:center;gap:8px;padding:7px 2px;border-bottom:1px solid var(--grid);flex-wrap:wrap}
+.mrow:last-child{border-bottom:none}
+.mrow .nm{font-weight:600;min-width:120px}
+.mrow .mi{color:var(--muted);font-size:.78rem}
+.subhead{display:flex;align-items:center;gap:8px;margin:14px 0 4px;color:var(--ink2);
+  font-size:.8rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);
+  border-radius:999px;padding:3px 11px;font-size:.78rem;background:var(--surface)}
+.chip .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.ctrls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+/* ---------- modal ---------- */
+#modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;
+  align-items:flex-start;justify-content:center;z-index:50;padding:40px 16px;overflow:auto}
+#modal-bg.open{display:flex}
+#modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  width:100%;max-width:440px;padding:18px 20px 16px}
+#modal h3{font-size:1rem;margin-bottom:4px}
+#modal .row2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+#modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+/* settings */
+.set-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.set-grid .card{margin:0}
+.note{font-size:.8rem;color:var(--ink2)}
+@media (max-width:520px){
+  .tiles{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
+  .tile .val{font-size:1.25rem}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🏡 Home</h1>
+    <span class="sub">sensors &amp; automation</span>
+    <span id="src-badge"></span>
+    <div class="spacer"></div>
+    <button class="btn" id="theme-btn" title="Cycle theme: auto / light / dark">◐ Theme</button>
+  </header>
+  <nav class="tabs" id="tabs"></nav>
+  <main id="view"></main>
+</div>
+<div id="tip" role="status" aria-live="polite"></div>
+<div id="modal-bg"><div id="modal" role="dialog" aria-modal="true"></div></div>
+<noscript><p style="padding:20px">This dashboard needs JavaScript enabled.</p></noscript>
+
+<script>
+'use strict';
+/* =====================================================================
+   Home dashboard — single-file app.
+   Data: ThingSpeak channel (CR310 posts to it) · Forecast: Open-Meteo.
+   Config (collections / sensors / controls / setpoints): localStorage.
+   ===================================================================== */
+
+/* ---------- tiny DOM helpers (textContent only — never innerHTML) ---------- */
+function el(tag, attrs, ...kids){
+  const n = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs||{})){
+    if (v==null || v===false) continue;
+    if (k==='class') n.className = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v===true ? '' : v);
+  }
+  for (const kid of kids.flat(9)){
+    if (kid==null || kid===false) continue;
+    n.append(kid.nodeType ? kid : document.createTextNode(kid));
+  }
+  return n;
+}
+function svgEl(tag, attrs, ...kids){
+  const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k,v] of Object.entries(attrs||{})) if (v!=null) n.setAttribute(k, v);
+  for (const kid of kids.flat(9)) if (kid!=null) n.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return n;
+}
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+const clamp = (v,a,b) => Math.min(b, Math.max(a,v));
+const debounce = (fn,ms) => { let h; return (...a)=>{ clearTimeout(h); h=setTimeout(()=>fn(...a),ms); }; };
+
+function fmtVal(v, dec){
+  if (v==null || !isFinite(v)) return '–';
+  return v.toLocaleString(undefined,{minimumFractionDigits:dec, maximumFractionDigits:dec});
+}
+const fmtTime = t => new Date(t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+const fmtDay  = t => new Date(t).toLocaleDateString([],{day:'numeric',month:'short'});
+const fmtFull = t => new Date(t).toLocaleString([],{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+
+/* ---------- config store ---------- */
+const CFG_KEY = 'homedash.config.v1';
+const KINDS = ['level','temperature','rain','voltage','pressure','humidity','other'];
+const KIND_DEC = {level:2, temperature:1, rain:1, voltage:2, pressure:1, humidity:0, other:2};
+const FC_KEYS = [
+  {v:'', l:'— none —'},
+  {v:'temperature_2m', l:'Air temperature (2 m)'},
+  {v:'relative_humidity_2m', l:'Relative humidity (2 m)'},
+  {v:'surface_pressure', l:'Surface pressure (station level)'},
+  {v:'pressure_msl', l:'Pressure (mean sea level)'},
+  {v:'precipitation', l:'Precipitation'},
+];
+const CTRL_TYPES = [
+  {v:'heater',l:'Heater'},{v:'cooler',l:'Cooler / chiller'},{v:'fan',l:'Fan / vent'},
+  {v:'valve',l:'Valve (irrigation / supply)'},{v:'humidifier',l:'Humidifier'},
+  {v:'pump',l:'Pump'},{v:'light',l:'Light'},{v:'other',l:'Other'},
+];
+const CTRL_ICON = {heater:'🔥',cooler:'❄️',fan:'🌀',valve:'🚰',humidifier:'💨',pump:'⛽',light:'💡',other:'⚙️'};
+
+function defaultConfig(){
+  return {
+    version: 1,
+    settings: {
+      thingspeak: { channelId:'', readKey:'', uploadIntervalMin:5 },
+      location: { lat:null, lon:null, label:'' },
+      theme: 'auto',
+      forceDemo: false,
+    },
+    collections: [
+      { id:'water', name:'Water tanks', icon:'💧', sensors:[
+          { id:'tank1', name:'Tank 1', unit:'m', kind:'level', field:1, slot:1, decimals:2, min:0.3, max:null, forecastKey:'' },
+          { id:'tank2', name:'Tank 2', unit:'m', kind:'level', field:2, slot:2, decimals:2, min:0.3, max:null, forecastKey:'' },
+        ], controls:[] },
+      { id:'weather', name:'Weather station', icon:'🌦️', sensors:[
+          { id:'rain', name:'Rain gauge', unit:'mm', kind:'rain', field:3, slot:1, decimals:1, min:null, max:null, forecastKey:'precipitation' },
+          { id:'airt', name:'Air temperature', unit:'°C', kind:'temperature', field:6, slot:2, decimals:1, min:null, max:null, forecastKey:'temperature_2m' },
+          { id:'baro', name:'Barometric pressure', unit:'hPa', kind:'pressure', field:7, slot:3, decimals:1, min:null, max:null, forecastKey:'surface_pressure' },
+          { id:'rh', name:'Humidity', unit:'%', kind:'humidity', field:8, slot:4, decimals:0, min:null, max:null, forecastKey:'relative_humidity_2m' },
+        ], controls:[] },
+      { id:'logger', name:'Logger health', icon:'🔋', sensors:[
+          { id:'batt', name:'Battery', unit:'V', kind:'voltage', field:4, slot:1, decimals:2, min:11.5, max:15, forecastKey:'' },
+          { id:'ptemp', name:'Panel temperature', unit:'°C', kind:'temperature', field:5, slot:2, decimals:1, min:null, max:null, forecastKey:'' },
+        ], controls:[] },
+    ],
+  };
+}
+let config;
+function loadConfig(){
+  try {
+    const raw = localStorage.getItem(CFG_KEY);
+    if (raw){ const c = JSON.parse(raw); if (c && c.collections) return c; }
+  } catch(e){ /* private mode etc. */ }
+  return defaultConfig();
+}
+function saveConfig(){ try { localStorage.setItem(CFG_KEY, JSON.stringify(config)); } catch(e){} }
+const allSensors = () => config.collections.flatMap(c => c.sensors);
+const findSensor = id => allSensors().find(s => s.id===id);
+function nextSlot(coll){
+  const used = new Set(coll.sensors.map(s=>s.slot));
+  for (let i=1;i<=8;i++) if (!used.has(i)) return i;
+  return 8; /* >8 series: reuse last slot; charts group by unit so this stays rare */
+}
+
+/* ---------- app state ---------- */
+const RANGES = { '24h':{days:1}, '7d':{days:7}, '30d':{days:30,avg:60}, '90d':{days:90,avg:240} };
+let state = {
+  range: (()=>{ try { return localStorage.getItem('homedash.range') || '7d'; } catch(e){ return '7d'; } })(),
+  data: { bySensor:new Map(), fetchedAt:null, source:null, error:null },
+  forecast: { byKey:{}, fetchedAt:null, error:null },
+  loading: false,
+};
+const demoMode = () => config.settings.forceDemo || !config.settings.thingspeak.channelId;
+
+/* ---------- demo data (deterministic, so the page works before wiring) ---------- */
+function n01(seed){ const x = Math.sin(seed*127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+function genDemoRows(days, extraDays){
+  const step = 15*60000, now = Date.now();
+  const start = now - days*864e5, end = now + extraDays*864e5;
+  let tank1 = 2.42, tank2 = 1.65;
+  const rows = [];
+  for (let t = start; t <= end; t += step){
+    const k = Math.floor(t/step), d = new Date(t);
+    const h = d.getHours() + d.getMinutes()/60;
+    const day = Math.floor(t/864e5);
+    const diurnal = Math.sin((h-9)/24*2*Math.PI);
+    const airT  = 14 + 7*diurnal + 3*(n01(day)-.5)*2 + (n01(k)-.5);
+    const rh    = clamp(86 - 26*diurnal - 10*(n01(day+7)-.5)*2 + (n01(k+3)-.5)*4, 25, 100);
+    const baro  = 1014 + 7*Math.sin(t/864e5/3.5*2*Math.PI + n01(day%97+13)*1.5) + (n01(k+5)-.5);
+    const panelT= airT + 4 + 2.5*Math.max(0,diurnal);
+    const batt  = 12.15 + (diurnal>0 ? 1.35*diurnal : 0.05*diurnal) + (n01(k+9)-.5)*.06;
+    const storm = n01(day+42) > 0.72 && h>13 && h<19 && n01(k+11) > 0.62;
+    const rain  = storm ? +(n01(k+13)*1.9).toFixed(1) : 0;
+    tank1 = clamp(tank1 - 0.0011 + rain*0.004 , 0.25, 2.95);
+    tank2 = clamp(tank2 - 0.0007 + rain*0.0032, 0.20, 2.45);
+    rows.push({ t, f:[tank1, tank2, rain, batt, panelT, airT, baro, rh] });
+  }
+  return rows;
+}
+const FC_FIELD = { temperature_2m:6, relative_humidity_2m:8, surface_pressure:7, pressure_msl:7, precipitation:3 };
+function demoForecast(keys){
+  const rows = genDemoRows(3, 4);            /* hourly grid from 15-min demo rows */
+  const byKey = {};
+  for (const key of keys){
+    const fi = FC_FIELD[key]-1, pts = [];
+    for (let i=0; i<rows.length; i+=4){
+      const t = rows[i].t, day = Math.floor(t/864e5);
+      let v;
+      if (key==='precipitation'){
+        let sum = 0;
+        for (let j=i; j<Math.min(i+4, rows.length); j++) sum += rows[j].f[fi];
+        v = +(sum * (0.6 + 0.8*n01(day+3))).toFixed(1);
+      } else {
+        v = rows[i].f[fi] + (n01(day+fi)-.5)*2 + Math.sin(t/36e5/7)*0.6;
+      }
+      pts.push([t, v]);
+    }
+    byKey[key] = pts;
+  }
+  return byKey;
+}
+
+/* ---------- data layer: ThingSpeak ---------- */
+async function refreshData(){
+  state.loading = true; markStale(true);
+  const range = RANGES[state.range];
+  const bySensor = new Map();
+  let error = null, source = 'thingspeak';
+  try {
+    if (demoMode()){
+      source = 'demo';
+      const rows = genDemoRows(range.days, 0);
+      for (const s of allSensors()){
+        if (!s.field) continue;
+        bySensor.set(s.id, rows.map(r => [r.t, +r.f[s.field-1].toFixed(3)]));
+      }
+    } else {
+      const ts = config.settings.thingspeak;
+      /* group sensors by channel (per-sensor override supported for future subsystems) */
+      const groups = new Map();
+      for (const s of allSensors()){
+        if (!s.field) continue;
+        const ch = (s.channelId || ts.channelId), key = (s.channelId ? (s.readKey||'') : (ts.readKey||''));
+        if (!ch) continue;
+        const gk = ch + '|' + key;
+        if (!groups.has(gk)) groups.set(gk, { ch, key, sensors:[] });
+        groups.get(gk).sensors.push(s);
+      }
+      for (const g of groups.values()){
+        let url = `https://api.thingspeak.com/channels/${encodeURIComponent(g.ch)}/feeds.json?days=${range.days}`;
+        if (range.avg) url += `&average=${range.avg}`;
+        if (g.key) url += `&api_key=${encodeURIComponent(g.key)}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`ThingSpeak HTTP ${res.status} (channel ${g.ch})`);
+        const json = await res.json();
+        if (json === -1 || !json.feeds) throw new Error(`Channel ${g.ch}: not found or read key required`);
+        const interval = Math.max(1, +ts.uploadIntervalMin || 5);
+        for (const s of g.sensors){
+          const pts = [];
+          /* with &average=N ThingSpeak returns the mean of the interval samples,
+             so tipping-bucket totals are rebuilt as mean × (samples per bucket) */
+          const rainScale = (s.kind==='rain' && range.avg) ? range.avg/interval : 1;
+          for (const row of json.feeds){
+            const t = Date.parse(row.created_at);
+            const v = parseFloat(row['field'+s.field]);
+            if (isFinite(t) && isFinite(v)) pts.push([t, v*rainScale]);
+          }
+          bySensor.set(s.id, pts);
+        }
+      }
+    }
+  } catch(e){ error = e.message || String(e); }
+  state.data = { bySensor, fetchedAt: Date.now(), source, error };
+  state.loading = false; markStale(false);
+  renderSrcBadge();
+}
+function markStale(on){ document.getElementById('view').classList.toggle('stale', on); }
+
+/* ---------- forecast layer: Open-Meteo ---------- */
+function forecastKeysInUse(){
+  return [...new Set(allSensors().map(s=>s.forecastKey).filter(Boolean))];
+}
+async function refreshForecast(){
+  const keys = forecastKeysInUse();
+  if (!keys.length){ state.forecast = { byKey:{}, fetchedAt:Date.now(), error:null }; return; }
+  const { lat, lon } = config.settings.location;
+  try {
+    if (demoMode() && (lat==null || lon==null)){
+      state.forecast = { byKey: demoForecast(keys), fetchedAt: Date.now(), error:null, demo:true };
+      return;
+    }
+    if (lat==null || lon==null){
+      state.forecast = { byKey:{}, fetchedAt:Date.now(), error:'no-location' };
+      return;
+    }
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`
+      + `&hourly=${keys.join(',')}&past_days=3&forecast_days=5&timeformat=unixtime&timezone=auto`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Open-Meteo HTTP ${res.status}`);
+    const json = await res.json();
+    const times = (json.hourly.time||[]).map(s => s*1000);
+    const byKey = {};
+    for (const key of keys){
+      const arr = json.hourly[key] || [];
+      byKey[key] = times.map((t,i)=>[t, arr[i]]).filter(p => p[1]!=null);
+    }
+    state.forecast = { byKey, fetchedAt: Date.now(), error:null };
+  } catch(e){
+    state.forecast = { byKey:{}, fetchedAt: Date.now(), error: e.message || String(e) };
+  }
+}
+
+/* ---------- series helpers ---------- */
+function latestOf(pts){ return pts && pts.length ? pts[pts.length-1] : null; }
+function valueAt(pts, t, tolMs){
+  if (!pts || !pts.length) return null;
+  const i = nearestIdx(pts.map(p=>p[0]), t);
+  return Math.abs(pts[i][0]-t) <= tolMs ? pts[i][1] : null;
+}
+function nearestIdx(times, t){
+  let lo=0, hi=times.length-1;
+  while (hi-lo > 1){ const mid=(lo+hi)>>1; (times[mid] < t) ? lo=mid : hi=mid; }
+  return (t-times[lo] <= times[hi]-t) ? lo : hi;
+}
+function bucketTotals(pts, mode, t0, t1){ /* mode: 'hour'|'day'|'week' */
+  const map = new Map();
+  for (const [t,v] of pts){
+    if (t < t0 || t > t1) continue;
+    const d = new Date(t);
+    if (mode==='hour') d.setMinutes(0,0,0);
+    else { d.setHours(0,0,0,0); if (mode==='week'){ const dow=(d.getDay()+6)%7; d.setDate(d.getDate()-dow); } }
+    const k = d.getTime();
+    map.set(k, (map.get(k)||0) + v);
+  }
+  const cats = [];
+  const d = new Date(t0);
+  if (mode==='hour') d.setMinutes(0,0,0); else { d.setHours(0,0,0,0); if (mode==='week'){ const dow=(d.getDay()+6)%7; d.setDate(d.getDate()-dow); } }
+  while (d.getTime() <= t1){
+    const k = d.getTime();
+    cats.push({ t:k, label: mode==='hour' ? fmtTime(k) : fmtDay(k), value: +(map.get(k)||0).toFixed(1) });
+    if (mode==='hour') d.setHours(d.getHours()+1);
+    else d.setDate(d.getDate() + (mode==='week'?7:1));
+  }
+  return cats;
+}
+function medianStep(pts){
+  if (!pts || pts.length<2) return 36e5;
+  const ds=[]; for(let i=1;i<Math.min(pts.length,50);i++) ds.push(pts[i][0]-pts[i-1][0]);
+  ds.sort((a,b)=>a-b); return ds[ds.length>>1];
+}
+
+/* ---------- tooltip singleton ---------- */
+const tip = document.getElementById('tip');
+function showTip(cx, cy, node){
+  tip.textContent=''; tip.append(node); tip.style.display='block';
+  const r = tip.getBoundingClientRect();
+  let x = cx+14, y = cy+14;
+  if (x + r.width > innerWidth-8) x = cx-14-r.width;
+  if (y + r.height > innerHeight-8) y = cy-14-r.height;
+  tip.style.left = Math.max(4,x)+'px'; tip.style.top = Math.max(4,y)+'px';
+}
+function hideTip(){ tip.style.display='none'; }
+function tipNode(header, rows){ /* rows: [{color, dash, name, val}] */
+  const n = el('div',{});
+  n.append(el('div',{class:'t-head'}, header));
+  for (const r of rows){
+    const key = svgEl('svg',{width:16,height:6},
+      svgEl('line',{x1:0,y1:3,x2:16,y2:3,stroke:r.color,'stroke-width':2.5,
+        'stroke-dasharray': r.dash?'4 3':null}));
+    n.append(el('div',{class:'t-row'}, key, el('span',{class:'v'}, r.val), el('span',{class:'n'}, r.name)));
+  }
+  return n;
+}
+
+/* ---------- axis math ---------- */
+function niceTicks(min, max, n=4){
+  if (!isFinite(min)||!isFinite(max)) { min=0; max=1; }
+  if (min===max){ min-=1; max+=1; }
+  const step0=(max-min)/n, mag=Math.pow(10,Math.floor(Math.log10(step0)));
+  const norm=step0/mag;
+  const step=(norm<1.5?1:norm<3?2:norm<7?5:10)*mag;
+  const lo=Math.floor(min/step)*step, hi=Math.ceil(max/step)*step;
+  const ticks=[]; for(let v=lo; v<=hi+step*1e-3; v+=step) ticks.push(+v.toFixed(10));
+  return {lo,hi:ticks[ticks.length-1],ticks,step};
+}
+function tickDec(step){ return step>=1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step)-1e-9)); }
+function timeTicks(t0, t1){
+  const span=t1-t0, target=5;
+  const mins=[15,30,60,180,360,720,1440,2880,4320,10080,20160,43200];
+  let step=(mins.find(m=>span/(m*60000)<=target)||43200)*60000;
+  const ticks=[];
+  if (step>=864e5){
+    const days=Math.round(step/864e5), d=new Date(t0); d.setHours(0,0,0,0);
+    while (d.getTime()<t0) d.setDate(d.getDate()+days);
+    while (d.getTime()<=t1){ ticks.push(d.getTime()); d.setDate(d.getDate()+days); }
+  } else {
+    for (let t=Math.ceil(t0/step)*step; t<=t1; t+=step) ticks.push(t);
+  }
+  return { ticks, fmt: step>=864e5 ? fmtDay : fmtTime };
+}
+
+/* =====================================================================
+   Chart engine — SVG, per the dataviz spec:
+   2px lines · ≤24px bars w/ 4px rounded data-end + 2px surface gaps ·
+   hairline solid grid · crosshair+tooltip · legend for ≥2 series ·
+   table-view twin on every chart.
+   ===================================================================== */
+const liveCards = [];
+function chartCard({title, sub, series, renderChart, renderTable}){
+  const body = el('div',{class:'chart-body'});
+  let showTable=false;
+  const btn = el('button',{class:'ghost', onclick:()=>{ showTable=!showTable; btn.textContent=showTable?'Chart':'Table'; paint(); }},'Table');
+  const legend = (series && series.length>1)
+    ? el('div',{class:'legend'}, series.map(s=>{
+        const key = svgEl('svg',{width:18,height:6},
+          s.bar ? svgEl('rect',{x:2,y:0,width:12,height:6,rx:2,fill:s.color})
+                : svgEl('line',{x1:0,y1:3,x2:18,y2:3,stroke:s.color,'stroke-width':2.5,
+                    'stroke-dasharray': s.dash?'4 3':null}));
+        return el('span',{class:'key'}, key, s.name);
+      }))
+    : null;
+  const card = el('section',{class:'card'},
+    el('div',{class:'card-head'}, el('h3',{},title),
+      sub?el('span',{class:'card-sub'},sub):null, el('div',{class:'spacer'}), btn),
+    legend, body);
+  function paint(){
+    body.textContent='';
+    if (showTable) body.append(renderTable());
+    else renderChart(body);
+  }
+  requestAnimationFrame(paint);
+  liveCards.push(paint);
+  return card;
+}
+const repaintCharts = debounce(()=>{ for (const p of liveCards) p(); }, 180);
+addEventListener('resize', repaintCharts);
+
+/* ---------- line chart ---------- */
+function drawLineChart(body, o){
+  /* o: {series:[{name,color,points,dash,wash}], unit, dec, height?, now?, includeZero?} */
+  const live = o.series.filter(s => s.points && s.points.length);
+  if (!live.length){ body.append(el('div',{class:'empty'},'No data yet — sensor not reporting for this range.')); return; }
+  const W = Math.max(300, body.clientWidth||640), H = o.height||235;
+  const m = {l:48, r:14, t:12, b:26}, pw = W-m.l-m.r, ph = H-m.t-m.b;
+  let t0=Infinity,t1=-Infinity,v0=Infinity,v1=-Infinity;
+  for (const s of live) for (const [t,v] of s.points){
+    if (t<t0)t0=t; if (t>t1)t1=t; if (v<v0)v0=v; if (v>v1)v1=v;
+  }
+  if (o.now!=null) t1=Math.max(t1,o.now);
+  if (o.includeZero) v0=Math.min(0,v0);
+  if (v0===v1){ v0-=1; v1+=1; }
+  const pad=(v1-v0)*0.08;
+  const yT=niceTicks(v0-((o.includeZero&&v0===0)?0:pad), v1+pad, 4);
+  const X=t=>m.l+(t-t0)/Math.max(1,t1-t0)*pw;
+  const Y=v=>m.t+ph-(v-yT.lo)/Math.max(1e-9,yT.hi-yT.lo)*ph;
+  const surface=cssVar('--surface'), gridC=cssVar('--grid'), axisC=cssVar('--axis'), mutedC=cssVar('--muted');
+  const root=svgEl('svg',{viewBox:`0 0 ${W} ${H}`,width:W,height:H,role:'img',
+    'aria-label':o.series.map(s=>s.name).join(', ')});
+  /* grid + y labels */
+  for (const tv of yT.ticks){
+    root.append(svgEl('line',{x1:m.l,y1:Y(tv),x2:m.l+pw,y2:Y(tv),stroke:gridC,'stroke-width':1}));
+    root.append(svgEl('text',{x:m.l-7,y:Y(tv)+3.5,'text-anchor':'end','font-size':10,fill:mutedC,
+      style:'font-variant-numeric:tabular-nums'}, fmtVal(tv, tickDec(yT.step))));
+  }
+  /* x ticks */
+  const xT=timeTicks(t0,t1);
+  for (const tv of xT.ticks){
+    root.append(svgEl('line',{x1:X(tv),y1:m.t+ph,x2:X(tv),y2:m.t+ph+3,stroke:axisC,'stroke-width':1}));
+    root.append(svgEl('text',{x:X(tv),y:m.t+ph+15,'text-anchor':'middle','font-size':10,fill:mutedC}, xT.fmt(tv)));
+  }
+  root.append(svgEl('line',{x1:m.l,y1:m.t+ph,x2:m.l+pw,y2:m.t+ph,stroke:axisC,'stroke-width':1}));
+  /* "now" marker */
+  if (o.now!=null && o.now>t0 && o.now<t1){
+    root.append(svgEl('line',{x1:X(o.now),y1:m.t,x2:X(o.now),y2:m.t+ph,stroke:axisC,'stroke-width':1}));
+    root.append(svgEl('text',{x:X(o.now)+4,y:m.t+9,'font-size':9,fill:mutedC},'now'));
+  }
+  /* series */
+  for (const s of live){
+    const d = s.points.map((p,i)=>(i?'L':'M')+X(p[0]).toFixed(1)+' '+Y(p[1]).toFixed(1)).join('');
+    if (s.wash && live.length===1){
+      const areaD = d + `L${X(s.points[s.points.length-1][0]).toFixed(1)} ${m.t+ph}L${X(s.points[0][0]).toFixed(1)} ${m.t+ph}Z`;
+      root.append(svgEl('path',{d:areaD,fill:s.color,'fill-opacity':.1,stroke:'none'}));
+    }
+    root.append(svgEl('path',{d,fill:'none',stroke:s.color,'stroke-width':2,
+      'stroke-linejoin':'round','stroke-linecap':'round',
+      'stroke-dasharray': s.dash?'7 5':null}));
+    const last=s.points[s.points.length-1];
+    root.append(svgEl('circle',{cx:X(last[0]),cy:Y(last[1]),r:4.5,fill:s.color,stroke:surface,'stroke-width':2}));
+    /* selective direct label: the endpoint only */
+    if (live.length<=4){
+      const lx=Math.min(X(last[0])+7, m.l+pw-4);
+      root.append(svgEl('text',{x:lx,y:Y(last[1])-7,'font-size':10,'font-weight':600,
+        fill:cssVar('--ink2'),'text-anchor':lx>m.l+pw-40?'end':'start',
+        style:'font-variant-numeric:tabular-nums'}, fmtVal(last[1],o.dec)));
+    }
+  }
+  /* crosshair + hover layer */
+  const cross=svgEl('line',{x1:0,y1:m.t,x2:0,y2:m.t+ph,stroke:axisC,'stroke-width':1,visibility:'hidden'});
+  root.append(cross);
+  const ref = live.reduce((a,b)=> b.points.length>a.points.length?b:a);
+  const refTimes = ref.points.map(p=>p[0]);
+  const tols = live.map(s => Math.max(medianStep(s.points)*0.75, 40*60000));
+  function readout(t, cx, cy){
+    cross.setAttribute('x1',X(t)); cross.setAttribute('x2',X(t));
+    cross.setAttribute('visibility','visible');
+    const rows = live.map((s,i)=>{
+      const v = valueAt(s.points, t, tols[i]);
+      return { color:s.color, dash:s.dash, name:s.name, val: v==null?'–':fmtVal(v,o.dec)+(o.unit?' '+o.unit:'') };
+    });
+    showTip(cx, cy, tipNode(fmtFull(t), rows));
+  }
+  const ov=svgEl('rect',{x:m.l,y:m.t,width:pw,height:ph,fill:'transparent',tabindex:0,
+    'aria-label':'Chart values — hover or focus for readout'});
+  ov.addEventListener('pointermove',e=>{
+    const r=root.getBoundingClientRect();
+    const frac=(e.clientX-r.left)*(W/r.width);
+    const t=t0+(clamp(frac,m.l,m.l+pw)-m.l)/pw*(t1-t0);
+    readout(refTimes[nearestIdx(refTimes,t)], e.clientX, e.clientY);
+  });
+  ov.addEventListener('pointerleave',()=>{ cross.setAttribute('visibility','hidden'); hideTip(); });
+  ov.addEventListener('focus',()=>{ const t=refTimes[refTimes.length-1];
+    const r=root.getBoundingClientRect(); readout(t, r.left+X(t)*(r.width/W), r.top+40); });
+  ov.addEventListener('blur',()=>{ cross.setAttribute('visibility','hidden'); hideTip(); });
+  root.append(ov);
+  body.append(root);
+}
+
+/* ---------- bar chart (rain) ---------- */
+function drawBarChart(body, o){
+  /* o: {cats:[{t,label}], series:[{name,color,values}], unit, dec, height?, todayIdx?} */
+  const W=Math.max(300, body.clientWidth||640), H=o.height||225;
+  const m={l:40,r:10,t:16,b:26}, pw=W-m.l-m.r, ph=H-m.t-m.b;
+  const nS=o.series.length, nC=o.cats.length;
+  if (!nC){ body.append(el('div',{class:'empty'},'No data for this range.')); return; }
+  let vmax=0; for (const s of o.series) for (const v of s.values) if (v!=null&&v>vmax) vmax=v;
+  const yT=niceTicks(0, Math.max(vmax,1)*1.12, 3);
+  const X=i=>m.l+i/nC*pw, band=pw/nC;
+  const Y=v=>m.t+ph-(v/Math.max(1e-9,yT.hi))*ph;
+  const gridC=cssVar('--grid'), axisC=cssVar('--axis'), mutedC=cssVar('--muted');
+  const root=svgEl('svg',{viewBox:`0 0 ${W} ${H}`,width:W,height:H,role:'img','aria-label':o.series.map(s=>s.name).join(', ')});
+  for (const tv of yT.ticks){
+    root.append(svgEl('line',{x1:m.l,y1:Y(tv),x2:m.l+pw,y2:Y(tv),stroke:gridC,'stroke-width':1}));
+    root.append(svgEl('text',{x:m.l-7,y:Y(tv)+3.5,'text-anchor':'end','font-size':10,fill:mutedC,
+      style:'font-variant-numeric:tabular-nums'}, fmtVal(tv, tickDec(yT.step))));
+  }
+  root.append(svgEl('line',{x1:m.l,y1:m.t+ph,x2:m.l+pw,y2:m.t+ph,stroke:axisC,'stroke-width':1}));
+  /* x labels — as many as fit at ~60px each, anchored so the last bar is always labelled */
+  const lblEvery=Math.ceil(nC/Math.max(2, Math.floor(pw/60)));
+  o.cats.forEach((c,i)=>{ if ((nC-1-i)%lblEvery===0){
+    const cx=X(i)+band/2;
+    const anchor = cx>m.l+pw-28 ? 'end' : cx<m.l+28 ? 'start' : 'middle';
+    root.append(svgEl('text',{x:cx,y:m.t+ph+15,'text-anchor':anchor,'font-size':10,fill:mutedC}, c.label));
+  }});
+  /* bars: ≤24px wide, 2px surface gap in groups, 4px rounded top, square base */
+  const gap=2, barW=Math.min(24, Math.max(3,(band*0.72-(nS-1)*gap)/nS));
+  const groupW=nS*barW+(nS-1)*gap;
+  const bars=[];
+  o.cats.forEach((c,i)=>{
+    const gx=X(i)+(band-groupW)/2;
+    const catBars=[];
+    o.series.forEach((s,si)=>{
+      const v=s.values[i];
+      if (v==null || v===0){ catBars.push(null); return; } /* zero: no mark; the tooltip still reads 0 */
+      const x=gx+si*(barW+gap), yTop=Y(v), h=m.t+ph-yTop;
+      const r=Math.min(4, barW/2, Math.max(0,h));
+      const d = h<=1
+        ? `M${x} ${m.t+ph-1}h${barW}v1h${-barW}Z`
+        : `M${x} ${m.t+ph}V${yTop+r}Q${x} ${yTop} ${x+r} ${yTop}H${x+barW-r}Q${x+barW} ${yTop} ${x+barW} ${yTop+r}V${m.t+ph}Z`;
+      const p=svgEl('path',{d,fill:s.color});
+      root.append(p); catBars.push(p);
+    });
+    bars.push(catBars);
+  });
+  /* selective direct labels: max + today */
+  const a0=o.series[0].values;
+  let maxI=0; a0.forEach((v,i)=>{ if((v||0)>(a0[maxI]||0)) maxI=i; });
+  const lblIdx=new Set([maxI]); if (o.todayIdx!=null) lblIdx.add(o.todayIdx);
+  for (const i of lblIdx){
+    const v=a0[i]; if (!v) continue;
+    root.append(svgEl('text',{x:X(i)+band/2,y:Y(v)-5,'text-anchor':'middle','font-size':10,
+      'font-weight':600,fill:cssVar('--ink2'),style:'font-variant-numeric:tabular-nums'}, fmtVal(v,o.dec)));
+  }
+  /* hover: whole category band is the hit target; hovered bars lift */
+  o.cats.forEach((c,i)=>{
+    const hit=svgEl('rect',{x:X(i),y:m.t,width:band,height:ph,fill:'transparent',tabindex:0});
+    const enter=(cx,cy)=>{
+      bars.forEach((cb,ci)=>cb.forEach(b=>{ if(b) b.setAttribute('fill-opacity', ci===i?1:.45); }));
+      showTip(cx,cy, tipNode(c.label, o.series.map((s,si)=>({color:s.color, name:s.name, bar:true,
+        val:(s.values[i]==null?'–':fmtVal(s.values[i],o.dec)+(o.unit?' '+o.unit:''))}))));
+    };
+    const leave=()=>{ bars.forEach(cb=>cb.forEach(b=>{ if(b) b.removeAttribute('fill-opacity'); })); hideTip(); };
+    hit.addEventListener('pointermove',e=>enter(e.clientX,e.clientY));
+    hit.addEventListener('pointerleave',leave);
+    hit.addEventListener('focus',()=>{ const r=root.getBoundingClientRect();
+      enter(r.left+(X(i)+band/2)*(r.width/W), r.top+30); });
+    hit.addEventListener('blur',leave);
+    root.append(hit);
+  });
+  body.append(root);
+}
+
+/* ---------- table views (the WCAG twin of every chart) ---------- */
+function seriesTable(series, unit, dec){
+  const map=new Map();
+  series.forEach((s,i)=>{ for (const [t,v] of (s.points||[])){
+    let r=map.get(t); if (!r){ r=new Array(series.length).fill(null); map.set(t,r); } r[i]=v; }});
+  const times=[...map.keys()].sort((a,b)=>b-a);
+  const shown=times.slice(0,400);
+  const tbl=el('table',{class:'data'},
+    el('thead',{}, el('tr',{}, el('th',{},'Time'),
+      series.map(s=>el('th',{}, `${s.name}${unit?` (${unit})`:''}`)))),
+    el('tbody',{}, shown.map(t=>el('tr',{}, el('td',{}, fmtFull(t)),
+      map.get(t).map(v=>el('td',{}, fmtVal(v,dec)))))));
+  const wrapEl=el('div',{}, el('div',{class:'tbl-wrap'}, tbl));
+  if (times.length>shown.length) wrapEl.append(el('p',{class:'help'},`Showing latest ${shown.length} of ${times.length} rows.`));
+  return wrapEl;
+}
+function catsTable(cats, series, unit, dec){
+  const tbl=el('table',{class:'data'},
+    el('thead',{}, el('tr',{}, el('th',{},'Period'),
+      series.map(s=>el('th',{}, `${s.name}${unit?` (${unit})`:''}`)))),
+    el('tbody',{}, cats.map((c,i)=>el('tr',{}, el('td',{}, c.label),
+      series.map(s=>el('td',{}, fmtVal(s.values[i],dec)))))));
+  return el('div',{class:'tbl-wrap'}, tbl);
+}
+
+/* ---------- sparkline (stat tiles): 12 points, de-emphasis hue, accent end ---------- */
+function sparkline(pts, accent){
+  if (!pts || pts.length<3) return null;
+  const W=76,H=22,n=12;
+  const t1=pts[pts.length-1][0], t0=Math.max(pts[0][0], t1-24*36e5);
+  const win=pts.filter(p=>p[0]>=t0);
+  if (win.length<3) return null;
+  const bucket=[]; const step=(t1-t0)/n||1;
+  for (let i=0;i<n;i++){
+    const a=t0+i*step, b=a+step;
+    const seg=win.filter(p=>p[0]>=a&&p[0]<b);
+    if (seg.length) bucket.push(seg.reduce((s,p)=>s+p[1],0)/seg.length);
+    else if (bucket.length) bucket.push(bucket[bucket.length-1]);
+  }
+  if (bucket.length<3) return null;
+  let lo=Math.min(...bucket), hi=Math.max(...bucket);
+  if (lo===hi){ lo-=1; hi+=1; }
+  const X=i=>2+i/(bucket.length-1)*(W-8), Y=v=>H-3-(v-lo)/(hi-lo)*(H-6);
+  const d=bucket.map((v,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)).join('');
+  return svgEl('svg',{width:W,height:H,'aria-hidden':'true'},
+    svgEl('path',{d,fill:'none',stroke:cssVar('--axis'),'stroke-width':1.5,'stroke-linecap':'round'}),
+    svgEl('circle',{cx:X(bucket.length-1),cy:Y(bucket[bucket.length-1]),r:3,fill:accent,
+      stroke:cssVar('--surface'),'stroke-width':2}));
+}
+
+/* =====================================================================
+   Views
+   ===================================================================== */
+const view = document.getElementById('view');
+const TABS = [ ['dashboard','Dashboard'], ['forecast','Forecast vs actual'], ['manage','Manage'], ['settings','Settings'] ];
+function currentTab(){
+  const h=(location.hash||'#dashboard').slice(1);
+  return TABS.some(t=>t[0]===h) ? h : 'dashboard';
+}
+function renderTabs(){
+  const nav=document.getElementById('tabs'); nav.textContent='';
+  const cur=currentTab();
+  for (const [id,label] of TABS)
+    nav.append(el('a',{href:'#'+id, class:cur===id?'on':null}, label));
+}
+function renderSrcBadge(){
+  const b=document.getElementById('src-badge'); b.textContent='';
+  if (state.data.error) b.append(el('span',{class:'badge err',title:state.data.error},'⚠ data error'));
+  else if (state.data.source==='demo')
+    b.append(el('span',{class:'badge demo',title:'No ThingSpeak channel configured — showing generated demo data. Set your channel in Settings.'},'◌ demo data'));
+}
+function sensorColor(s){ return cssVar('--s'+(clamp(s.slot||1,1,8))); }
+
+/* ---------- dashboard ---------- */
+function renderDashboard(){
+  view.textContent=''; liveCards.length=0;
+  /* one filter row scoping everything below it */
+  const seg=el('div',{class:'seg',role:'group','aria-label':'Time range'},
+    Object.keys(RANGES).map(r=>el('button',{class:r===state.range?'on':null,onclick:async()=>{
+      state.range=r; try{localStorage.setItem('homedash.range',r);}catch(e){}
+      await refreshData(); render();
+    }},r)));
+  const meta=el('span',{class:'meta'},
+    state.data.fetchedAt ? `updated ${fmtTime(state.data.fetchedAt)}` : 'loading…',
+    state.data.source==='thingspeak' ? ' · ThingSpeak' : '');
+  view.append(el('div',{class:'filters'}, seg,
+    el('button',{class:'btn',onclick:async()=>{ await refreshData(); render(); }},'↻ Refresh'),
+    el('div',{class:'spacer'}), meta));
+  if (state.data.error)
+    view.append(el('div',{class:'card'}, el('p',{class:'note'},'⚠ ', state.data.error,
+      ' — check the channel ID / read key in ', el('a',{href:'#settings'},'Settings'), '.')));
+
+  const now=Date.now(), rangeDays=RANGES[state.range].days;
+  for (const coll of config.collections){
+    view.append(el('div',{class:'coll-head'},
+      el('span',{class:'ico'},coll.icon||'📦'), el('h2',{},coll.name)));
+    /* tiles */
+    const tiles=el('div',{class:'tiles'});
+    for (const s of coll.sensors){
+      const pts=state.data.bySensor.get(s.id)||[];
+      const last=latestOf(pts);
+      const color=sensorColor(s);
+      const tile=el('div',{class:'tile'});
+      if (s.kind==='rain'){
+        const midnight=new Date(); midnight.setHours(0,0,0,0);
+        const today=pts.filter(p=>p[0]>=midnight.getTime()).reduce((a,p)=>a+p[1],0);
+        const yest=pts.filter(p=>p[0]>=midnight.getTime()-864e5&&p[0]<midnight.getTime()).reduce((a,p)=>a+p[1],0);
+        tile.append(el('div',{class:'lbl'},'Rain today'),
+          el('div',{class:'val'}, fmtVal(today,s.decimals??1), el('span',{class:'unit'},s.unit)),
+          el('div',{class:'delta'},`yesterday ${fmtVal(yest,1)} ${s.unit}`));
+      } else {
+        tile.append(el('div',{class:'lbl'},s.name),
+          el('div',{class:'val'}, last?fmtVal(last[1],s.decimals??2):'–', el('span',{class:'unit'},s.unit)));
+        if (last){
+          const prev=valueAt(pts,last[0]-864e5,3*36e5);
+          if (prev!=null){
+            const d=last[1]-prev;
+            const cls = s.kind==='voltage' ? (d>=0?'up':'down') : '';
+            tile.append(el('div',{class:'delta '+cls},
+              `${d>=0?'▲':'▼'} ${fmtVal(Math.abs(d),s.decimals??2)} vs 24 h ago`));
+          }
+          if (s.min!=null&&last[1]<s.min) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ below min'));
+          else if (s.max!=null&&last[1]>s.max) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ above max'));
+          const sp=sparkline(pts,color); if (sp) tile.append(sp);
+        } else tile.append(el('div',{class:'delta'},'awaiting data'));
+      }
+      tiles.append(tile);
+    }
+    view.append(tiles);
+    /* controls row */
+    if (coll.controls.length){
+      const row=el('div',{class:'ctrls'});
+      for (const c of coll.controls) row.append(controlChip(coll,c));
+      view.append(row);
+    }
+    /* charts: one unit → one axis → one chart; rain gets its own totals chart */
+    const grid=el('div',{class:'grid'});
+    const rain=coll.sensors.filter(s=>s.kind==='rain');
+    const rest=coll.sensors.filter(s=>s.kind!=='rain');
+    const byUnit=new Map();
+    for (const s of rest){ const k=s.unit||'?'; if(!byUnit.has(k))byUnit.set(k,[]); byUnit.get(k).push(s); }
+    for (const [unit,ss] of byUnit){
+      const series=ss.map(s=>({name:s.name,color:sensorColor(s),
+        points:state.data.bySensor.get(s.id)||[], wash:ss.length===1}));
+      if (!series.some(s=>s.points.length) && ss.every(s=>!state.data.bySensor.get(s.id))) continue;
+      const dec=ss[0].decimals ?? KIND_DEC[ss[0].kind] ?? 1;
+      grid.append(chartCard({
+        title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
+        sub: unit, series,
+        renderChart: b=>drawLineChart(b,{series,unit,dec,includeZero:ss[0].kind==='level'}),
+        renderTable: ()=>seriesTable(series,unit,dec),
+      }));
+    }
+    for (const s of rain){
+      const pts=state.data.bySensor.get(s.id)||[];
+      const mode=rangeDays<=1?'hour':rangeDays<=31?'day':'week';
+      const cats=bucketTotals(pts,mode,now-rangeDays*864e5,now);
+      const vals=cats.map(c=>c.value);
+      const series=[{name:s.name,color:sensorColor(s),values:vals,bar:true}];
+      grid.append(chartCard({
+        title:`${s.name} — ${mode==='hour'?'hourly':mode==='day'?'daily':'weekly'} totals`,
+        sub:s.unit, series,
+        renderChart:b=>drawBarChart(b,{cats,series,unit:s.unit,dec:1,todayIdx:cats.length-1}),
+        renderTable:()=>catsTable(cats,series,s.unit,1),
+      }));
+    }
+    if (grid.children.length) view.append(grid);
+  }
+}
+function controlChip(coll,c){
+  const s=c.sensorId?findSensor(c.sensorId):null;
+  const pts=s?state.data.bySensor.get(s.id):null;
+  const last=latestOf(pts||[]);
+  const demand=controlDemand(c,last?last[1]:null);
+  const parts=[el('span',{},CTRL_ICON[c.type]||'⚙️'), el('strong',{},c.name),
+    el('span',{class:'mi'},c.mode)];
+  if (c.setpoint!=null) parts.push(el('span',{class:'mi'},
+    `set ${fmtVal(c.setpoint,1)}${s?' '+s.unit:''}${c.hysteresis?` ±${fmtVal(c.hysteresis/2,1)}`:''}`));
+  if (demand) parts.push(el('span',{class:'dot',
+    style:`background:${demand==='ON'?cssVar('--good'):demand==='OFF'?cssVar('--axis'):cssVar('--warn')}`}),
+    el('span',{class:'mi'},demand==='HOLD'?'in band':`would be ${demand}`));
+  return el('span',{class:'chip',title:'Configuration only for now — actuation lands with the TalkBack integration (see README).'},parts);
+}
+function controlDemand(c,val){
+  if (c.mode!=='auto'||!c.enabled||val==null||c.setpoint==null) return null;
+  const h=(c.hysteresis||0)/2;
+  if (c.action==='raise') return val<c.setpoint-h?'ON':val>c.setpoint+h?'OFF':'HOLD';
+  return val>c.setpoint+h?'ON':val<c.setpoint-h?'OFF':'HOLD';
+}
+
+/* ---------- forecast vs actual ---------- */
+function renderForecastView(){
+  view.textContent=''; liveCards.length=0;
+  const mapped=allSensors().filter(s=>s.forecastKey);
+  if (!mapped.length){
+    view.append(el('div',{class:'card'},el('p',{class:'note'},
+      'No sensors are mapped to a forecast variable yet. Edit a sensor in ',
+      el('a',{href:'#manage'},'Manage'),' and pick its “forecast variable”.')));
+    return;
+  }
+  const loc=config.settings.location;
+  if (state.forecast.error==='no-location' || (!state.forecast.demo && (loc.lat==null||loc.lon==null))){
+    view.append(el('div',{class:'card'},el('p',{class:'note'},
+      'Set your location in ',el('a',{href:'#settings'},'Settings'),
+      ' to pull Open-Meteo forecasts for your site.')));
+    if (loc.lat==null) return;
+  }
+  const src = state.forecast.demo ? 'demo forecast' : 'Open-Meteo';
+  view.append(el('div',{class:'filters'},
+    el('span',{class:'meta'},`Solid = measured (CR310) · dashed = forecast (${src}) · window: past 3 days → next 4 days`),
+    el('div',{class:'spacer'}),
+    el('button',{class:'btn',onclick:async()=>{ await refreshForecast(); render(); }},'↻ Refresh')));
+  if (state.forecast.error && state.forecast.error!=='no-location')
+    view.append(el('div',{class:'card'},el('p',{class:'note'},'⚠ Forecast fetch failed: ',state.forecast.error)));
+
+  const now=Date.now(), t0=now-3*864e5, t1=now+4*864e5;
+  const cA=cssVar('--s1'), cF=cssVar('--s8');
+  const grid=el('div',{class:'grid'});
+  for (const s of mapped){
+    const fpts=(state.forecast.byKey[s.forecastKey]||[]).filter(p=>p[0]>=t0&&p[0]<=t1);
+    const apts=(state.data.bySensor.get(s.id)||[]).filter(p=>p[0]>=t0);
+    const dec=s.decimals ?? KIND_DEC[s.kind] ?? 1;
+    if (s.kind==='rain'||s.forecastKey==='precipitation'){
+      const catsA=bucketTotals(apts,'day',t0,now);
+      const catsF=bucketTotals(fpts,'day',t0,t1);
+      const labels=catsF.length?catsF:catsA;
+      const aVals=labels.map(c=>{ const m=catsA.find(x=>x.t===c.t); return (m&&c.t<=now)?m.value:null; });
+      const fVals=labels.map(c=>{ const m=catsF.find(x=>x.t===c.t); return m?m.value:null; });
+      const series=[{name:'Measured',color:cA,values:aVals,bar:true},
+                    {name:'Forecast',color:cF,values:fVals,bar:true}];
+      const todayIdx=labels.findIndex(c=>c.t<=now&&now<c.t+864e5);
+      grid.append(chartCard({title:`${s.name} — daily totals`,sub:s.unit,series,
+        renderChart:b=>drawBarChart(b,{cats:labels,series,unit:s.unit,dec:1,todayIdx:todayIdx<0?null:todayIdx}),
+        renderTable:()=>catsTable(labels,series,s.unit,1)}));
+    } else {
+      const series=[{name:'Measured',color:cA,points:apts},
+                    {name:'Forecast',color:cF,points:fpts,dash:true}];
+      grid.append(chartCard({title:s.name,sub:s.unit,series,
+        renderChart:b=>drawLineChart(b,{series,unit:s.unit,dec,now}),
+        renderTable:()=>seriesTable(series,s.unit,dec)}));
+    }
+  }
+  view.append(grid);
+}
+
+/* ---------- manage (CRUD) ---------- */
+function renderManage(){
+  view.textContent=''; liveCards.length=0;
+  view.append(el('div',{class:'filters'},
+    el('button',{class:'btn primary',onclick:()=>collectionForm(null)},'＋ Add collection'),
+    el('div',{class:'spacer'}),
+    el('span',{class:'meta'},'Config lives in this browser — export a backup in Settings.')));
+  config.collections.forEach((coll,ci)=>{
+    const card=el('section',{class:'card'});
+    card.append(el('div',{class:'card-head'},
+      el('span',{class:'ico'},coll.icon||'📦'), el('h3',{},coll.name),
+      el('div',{class:'spacer'}),
+      el('button',{class:'ghost',title:'Move up',onclick:()=>{ if(ci>0){ const a=config.collections;
+        [a[ci-1],a[ci]]=[a[ci],a[ci-1]]; saveConfig(); render(); } }},'↑'),
+      el('button',{class:'ghost',title:'Move down',onclick:()=>{ const a=config.collections;
+        if(ci<a.length-1){ [a[ci+1],a[ci]]=[a[ci],a[ci+1]]; saveConfig(); render(); } }},'↓'),
+      el('button',{class:'ghost',onclick:()=>collectionForm(coll)},'Edit'),
+      el('button',{class:'ghost danger',onclick:()=>{
+        if (confirm(`Delete collection “${coll.name}” and its ${coll.sensors.length} sensor(s) / ${coll.controls.length} control(s)?`)){
+          config.collections=config.collections.filter(x=>x!==coll); saveConfig(); render();
+        }}},'Delete')));
+    /* sensors */
+    card.append(el('div',{class:'subhead'},'Sensors',
+      el('button',{class:'ghost',onclick:()=>sensorForm(coll,null)},'＋ add')));
+    if (!coll.sensors.length) card.append(el('p',{class:'help'},'No sensors yet.'));
+    for (const s of coll.sensors){
+      const fc=FC_KEYS.find(f=>f.v===(s.forecastKey||''));
+      card.append(el('div',{class:'mrow'},
+        el('span',{class:'dot',style:`background:${sensorColor(s)};width:9px;height:9px;border-radius:50%;display:inline-block`}),
+        el('span',{class:'nm'},s.name),
+        el('span',{class:'mi'},`${s.unit} · ${s.kind} · field ${s.field}${s.channelId?` @ch ${s.channelId}`:''}`),
+        fc&&fc.v?el('span',{class:'mi'},`↔ ${fc.l}`):null,
+        el('div',{class:'spacer'}),
+        el('button',{class:'ghost',onclick:()=>sensorForm(coll,s)},'Edit'),
+        el('button',{class:'ghost danger',onclick:()=>{
+          if (confirm(`Delete sensor “${s.name}”?`)){
+            coll.sensors=coll.sensors.filter(x=>x!==s);
+            coll.controls.forEach(c=>{ if(c.sensorId===s.id) c.sensorId=null; });
+            saveConfig(); render();
+          }}},'Delete')));
+    }
+    /* controls */
+    card.append(el('div',{class:'subhead'},'Controls & setpoints',
+      el('button',{class:'ghost',onclick:()=>controlForm(coll,null)},'＋ add')));
+    if (!coll.controls.length)
+      card.append(el('p',{class:'help'},'No controls yet — add heaters, valves, humidifiers… with setpoints for future automation.'));
+    for (const c of coll.controls){
+      const s=c.sensorId?findSensor(c.sensorId):null;
+      card.append(el('div',{class:'mrow'},
+        el('span',{},CTRL_ICON[c.type]||'⚙️'),
+        el('span',{class:'nm'},c.name),
+        el('span',{class:'mi'},`${c.mode}${c.enabled?'':' · disabled'}`),
+        c.setpoint!=null?el('span',{class:'mi'},
+          `${c.action==='raise'?'on below':'on above'} ${fmtVal(c.setpoint,1)}${s?' '+s.unit:''}${c.hysteresis?` (±${fmtVal(c.hysteresis/2,1)})`:''}`):null,
+        s?el('span',{class:'mi'},`reads ${s.name}`):null,
+        el('div',{class:'spacer'}),
+        el('button',{class:'ghost',onclick:()=>controlForm(coll,c)},'Edit'),
+        el('button',{class:'ghost danger',onclick:()=>{
+          if (confirm(`Delete control “${c.name}”?`)){
+            coll.controls=coll.controls.filter(x=>x!==c); saveConfig(); render();
+          }}},'Delete')));
+    }
+    view.append(card);
+  });
+  view.append(el('div',{class:'card'},el('p',{class:'note'},
+    'Controls here are configuration for now: the dashboard shows what each one ',
+    el('em',{},'would'),' do against live readings. Actuation (relays / valves on the CR310) arrives via the ThingSpeak TalkBack queue — the logger polls for commands, so no port-forwarding. See the README roadmap.')));
+}
+
+/* ---------- modal forms ---------- */
+const modalBg=document.getElementById('modal-bg'), modal=document.getElementById('modal');
+function closeModal(){ modalBg.classList.remove('open'); modal.textContent=''; }
+modalBg.addEventListener('click',e=>{ if (e.target===modalBg) closeModal(); });
+addEventListener('keydown',e=>{ if (e.key==='Escape') closeModal(); });
+function openForm(title, fields, values, onSave){
+  modal.textContent='';
+  const form=el('form',{onsubmit:e=>{
+    e.preventDefault();
+    const out={};
+    for (const f of fields){
+      const inp=form.querySelector(`[name="${f.key}"]`);
+      if (f.type==='checkbox') out[f.key]=inp.checked;
+      else if (f.type==='number'){ const v=parseFloat(inp.value); out[f.key]=isFinite(v)?v:null; }
+      else out[f.key]=inp.value.trim();
+    }
+    if (onSave(out)!==false){
+      closeModal(); saveConfig(); render();
+      /* pick up data for newly added/re-mapped sensors right away */
+      refreshData().then(()=>refreshForecast()).then(render);
+    }
+  }});
+  form.append(el('h3',{},title));
+  for (const f of fields){
+    const v=values?.[f.key];
+    let inp;
+    if (f.type==='select') inp=el('select',{name:f.key},
+      f.options.map(o=>{ const opt=el('option',{value:o.v},o.l); if (String(v??'')===String(o.v)) opt.selected=true; return opt; }));
+    else if (f.type==='checkbox') inp=el('input',{type:'checkbox',name:f.key});
+    else inp=el('input',{type:f.type||'text',name:f.key,step:f.step,min:f.min,max:f.max,
+      placeholder:f.placeholder, value: v==null?'':String(v)});
+    if (f.type==='checkbox'&&v) inp.checked=true;
+    const block=el('div',{}, el('label',{},f.label), inp, f.help?el('p',{class:'help'},f.help):null);
+    form.append(block);
+  }
+  form.append(el('div',{class:'actions'},
+    el('button',{class:'btn',type:'button',onclick:closeModal},'Cancel'),
+    el('button',{class:'btn primary',type:'submit'},'Save')));
+  modal.append(form);
+  modalBg.classList.add('open');
+  const first=form.querySelector('input,select'); if (first) first.focus();
+}
+function collectionForm(coll){
+  openForm(coll?'Edit collection':'New collection',[
+    {key:'name',label:'Name',placeholder:'e.g. Mushroom house'},
+    {key:'icon',label:'Icon (emoji)',placeholder:'🍄'},
+  ], coll||{icon:'📦'}, out=>{
+    if (!out.name) return false;
+    if (coll){ coll.name=out.name; coll.icon=out.icon||'📦'; }
+    else config.collections.push({id:uid(),name:out.name,icon:out.icon||'📦',sensors:[],controls:[]});
+  });
+}
+function sensorForm(coll,s){
+  openForm(s?'Edit sensor':'New sensor',[
+    {key:'name',label:'Name',placeholder:'e.g. Grow-room temperature'},
+    {key:'unit',label:'Unit',placeholder:'°C, m, mm, V, hPa, %…'},
+    {key:'kind',label:'Type',type:'select',options:KINDS.map(k=>({v:k,l:k}))},
+    {key:'field',label:'ThingSpeak field (1–8)',type:'number',min:1,max:8,step:1},
+    {key:'decimals',label:'Decimal places',type:'number',min:0,max:4,step:1},
+    {key:'min',label:'Alert below (optional)',type:'number',step:'any',help:'Tile shows a warning under this value.'},
+    {key:'max',label:'Alert above (optional)',type:'number',step:'any'},
+    {key:'forecastKey',label:'Forecast variable (Open-Meteo)',type:'select',options:FC_KEYS,
+      help:'Map this to plot forecast vs actual on one chart.'},
+    {key:'channelId',label:'Channel override (optional)',placeholder:'Leave blank to use the default channel',
+      help:'For future subsystems on their own ThingSpeak channels.'},
+    {key:'readKey',label:'Read key for that channel (optional)'},
+  ], s||{kind:'temperature',decimals:1}, out=>{
+    if (!out.name||!out.field) return false;
+    out.field=clamp(Math.round(out.field),1,8);
+    if (s) Object.assign(s,out);
+    else coll.sensors.push(Object.assign({id:uid(),slot:nextSlot(coll)},out));
+  });
+}
+function controlForm(coll,c){
+  const sensorOpts=[{v:'',l:'— none —'},...coll.sensors.map(s=>({v:s.id,l:`${s.name} (${s.unit})`}))];
+  openForm(c?'Edit control':'New control',[
+    {key:'name',label:'Name',placeholder:'e.g. Grow-room heater'},
+    {key:'type',label:'Type',type:'select',options:CTRL_TYPES},
+    {key:'sensorId',label:'Linked sensor',type:'select',options:sensorOpts,
+      help:'The reading this control reacts to in auto mode.'},
+    {key:'mode',label:'Mode',type:'select',options:[{v:'auto',l:'Auto (setpoint)'},{v:'manual',l:'Manual'},{v:'off',l:'Off'}]},
+    {key:'action',label:'Behaviour',type:'select',options:[
+      {v:'raise',l:'Turn ON below setpoint (heat / humidify / top-up)'},
+      {v:'lower',l:'Turn ON above setpoint (cool / vent / drain)'}]},
+    {key:'setpoint',label:'Setpoint',type:'number',step:'any'},
+    {key:'hysteresis',label:'Deadband width (optional)',type:'number',step:'any',min:0,
+      help:'e.g. 1 → switches at setpoint ± 0.5 to avoid chatter.'},
+    {key:'enabled',label:'Enabled',type:'checkbox'},
+  ], c||{mode:'auto',action:'raise',enabled:true}, out=>{
+    if (!out.name) return false;
+    if (c) Object.assign(c,out);
+    else coll.controls.push(Object.assign({id:uid()},out));
+  });
+}
+
+/* ---------- settings ---------- */
+function renderSettings(){
+  view.textContent=''; liveCards.length=0;
+  const ts=config.settings.thingspeak, loc=config.settings.location;
+  const grid=el('div',{class:'set-grid'});
+  /* data source */
+  const chId=el('input',{value:ts.channelId||'',placeholder:'e.g. 1234567',inputmode:'numeric'});
+  const chKey=el('input',{value:ts.readKey||'',placeholder:'only needed for private channels'});
+  const chInt=el('input',{type:'number',value:ts.uploadIntervalMin||5,min:1,step:1});
+  const chDemo=el('input',{type:'checkbox'}); chDemo.checked=!!config.settings.forceDemo;
+  grid.append(el('section',{class:'card'},
+    el('h3',{},'Data source — ThingSpeak'),
+    el('p',{class:'help'},'The CR310 posts to a ThingSpeak channel over plain HTTPS — free tier, no port forwarding. Setup steps are in the README.'),
+    el('label',{},'Channel ID'), chId,
+    el('label',{},'Read API key'), chKey,
+    el('label',{},'Logger upload interval (minutes)'), chInt,
+    el('p',{class:'help'},'Used to rebuild rain totals when long ranges are served as hourly averages.'),
+    el('label',{},el('span',{},'Force demo data ')), chDemo,
+    el('div',{class:'actions',style:'margin-top:14px'},
+      el('button',{class:'btn primary',onclick:async()=>{
+        ts.channelId=chId.value.trim(); ts.readKey=chKey.value.trim();
+        ts.uploadIntervalMin=Math.max(1,parseInt(chInt.value,10)||5);
+        config.settings.forceDemo=chDemo.checked;
+        saveConfig(); await refreshData(); await refreshForecast(); render();
+      }},'Save & reload data'))));
+  /* location */
+  const lat=el('input',{type:'number',step:'any',value:loc.lat??'',placeholder:'-27.47'});
+  const lon=el('input',{type:'number',step:'any',value:loc.lon??'',placeholder:'153.02'});
+  const lbl=el('input',{value:loc.label||'',placeholder:'Home'});
+  grid.append(el('section',{class:'card'},
+    el('h3',{},'Forecast location — Open-Meteo'),
+    el('p',{class:'help'},'Free, no API key. Used for the forecast-vs-actual charts.'),
+    el('label',{},'Latitude'), lat, el('label',{},'Longitude'), lon,
+    el('label',{},'Label'), lbl,
+    el('div',{class:'actions',style:'margin-top:14px'},
+      el('button',{class:'btn',onclick:()=>{
+        navigator.geolocation?.getCurrentPosition(p=>{
+          lat.value=p.coords.latitude.toFixed(4); lon.value=p.coords.longitude.toFixed(4);
+        },()=>alert('Could not read location — enter it manually.'));
+      }},'Use my location'),
+      el('button',{class:'btn primary',onclick:async()=>{
+        const la=parseFloat(lat.value), lo=parseFloat(lon.value);
+        loc.lat=isFinite(la)?la:null; loc.lon=isFinite(lo)?lo:null; loc.label=lbl.value.trim();
+        saveConfig(); await refreshForecast(); render();
+      }},'Save'))));
+  /* config backup */
+  const fileIn=el('input',{type:'file',accept:'application/json'});
+  fileIn.addEventListener('change',()=>{
+    const f=fileIn.files[0]; if (!f) return;
+    f.text().then(txt=>{
+      try {
+        const c=JSON.parse(txt);
+        if (!c||!Array.isArray(c.collections)) throw new Error('not a dashboard config');
+        config=c; saveConfig(); refreshData().then(()=>{ refreshForecast().then(render); });
+        alert('Config imported.');
+      } catch(e){ alert('Import failed: '+e.message); }
+    });
+  });
+  grid.append(el('section',{class:'card'},
+    el('h3',{},'Configuration'),
+    el('p',{class:'help'},'Collections, sensors, controls and settings are stored in this browser (localStorage). Export a JSON backup — or to sync another device, import it there.'),
+    el('div',{class:'actions',style:'justify-content:flex-start;margin-top:10px'},
+      el('button',{class:'btn',onclick:()=>{
+        const blob=new Blob([JSON.stringify(config,null,2)],{type:'application/json'});
+        const a=el('a',{href:URL.createObjectURL(blob),download:'home-dashboard-config.json'});
+        document.body.append(a); a.click(); a.remove();
+      }},'Export config'),
+      el('button',{class:'btn danger',onclick:()=>{
+        if (confirm('Reset all collections, sensors, controls and settings to defaults?')){
+          config=defaultConfig(); saveConfig();
+          refreshData().then(()=>{ refreshForecast().then(render); });
+        }}},'Reset to defaults')),
+    el('label',{},'Import config'), fileIn));
+  view.append(grid);
+}
+
+/* ---------- theme ---------- */
+function applyTheme(){
+  const t=config.settings.theme||'auto';
+  document.documentElement.dataset.theme = t==='auto' ? '' : t;
+}
+document.getElementById('theme-btn').addEventListener('click',()=>{
+  const order=['auto','light','dark'];
+  const cur=config.settings.theme||'auto';
+  config.settings.theme=order[(order.indexOf(cur)+1)%order.length];
+  saveConfig(); applyTheme(); render();
+});
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{ applyTheme(); render(); });
+
+/* ---------- router & boot ---------- */
+function render(){
+  renderTabs();
+  hideTip();
+  const tab=currentTab();
+  if (tab==='dashboard') renderDashboard();
+  else if (tab==='forecast') renderForecastView();
+  else if (tab==='manage') renderManage();
+  else renderSettings();
+}
+addEventListener('hashchange',render);
+(async function boot(){
+  config=loadConfig();
+  applyTheme();
+  renderTabs();
+  view.append(el('div',{class:'card'},el('p',{class:'note'},'Loading…')));
+  await refreshData();
+  await refreshForecast();
+  render();
+  setInterval(async()=>{ await refreshData(); if (currentTab()==='dashboard') render(); }, 5*60000);
+  setInterval(async()=>{ await refreshForecast(); if (currentTab()==='forecast') render(); }, 30*60000);
+})();
+</script>
+</body>
+</html>
