@@ -1,0 +1,93 @@
+'CR310 → ThingSpeak push template
+'---------------------------------------------------------------
+'Posts sensor readings to a ThingSpeak channel every 5 minutes
+'over outbound HTTPS — no port forwarding, no extra hardware.
+'
+'Adapt the measurement section to your own sensors/wiring; the
+'field numbers must match the dashboard's sensor config
+'(Manage tab) and the README field map:
+'  field1 Tank 1 (m)      field5 Panel temp (degC)
+'  field2 Tank 2 (m)      field6 Air temp (degC)
+'  field3 Rain (mm/post)  field7 Baro pressure (hPa)
+'  field4 Battery (V)     field8 Humidity (%)
+'
+'Rain is accumulated between posts and cleared only after a
+'successful post, so daily totals reconstruct exactly.
+'---------------------------------------------------------------
+
+Const TS_WRITE_KEY = "PASTE_YOUR_WRITE_API_KEY"
+Const TS_URL = "https://api.thingspeak.com/update"
+'If your OS build lacks TLS, plain http://api.thingspeak.com/update also works.
+
+'--- measurements
+Public BattV, PTemp_C
+Public Tank1_m, Tank2_m
+Public Rain_mm                 'per-scan tips (mm)
+Public AirT_C, RH_pct, Baro_hPa
+Public RainAccum               'mm since last successful post
+
+'--- post plumbing
+Public PostBody As String * 512
+Public PostResponse As String * 256
+Public PostResult As Long      'HTTP status; 200 = OK
+Public LastEntryID As Long     'ThingSpeak returns the entry id (0 = rejected)
+
+'--- local history (keep logging on the logger too)
+DataTable (FiveMin,True,-1)
+  DataInterval (0,5,Min,10)
+  Sample (1,Tank1_m,IEEE4)
+  Sample (1,Tank2_m,IEEE4)
+  Totalize (1,Rain_mm,FP2,False)
+  Minimum (1,BattV,FP2,False,False)
+  Sample (1,PTemp_C,FP2)
+  Sample (1,AirT_C,FP2)
+  Sample (1,Baro_hPa,IEEE4)
+  Sample (1,RH_pct,FP2)
+EndTable
+
+BeginProg
+  Scan (10,Sec,0,0)
+    Battery (BattV)
+    PanelTemp (PTemp_C,60)
+
+    'Tipping bucket on P_SW, switch-closure, 0.2 mm per tip — adjust to your gauge
+    PulseCount (Rain_mm,1,P_SW,2,0,0.2,0)
+    RainAccum = RainAccum + Rain_mm
+
+    '=== YOUR SENSORS ===================================
+    'Tank levels — replace with your existing instructions,
+    'e.g. pressure transducer / SDI-12:
+    '  VoltSE (Tank1_m,1,mV2500,1,True,0,60,0.001,0)
+    '  SDI12Recorder (Tank2_m,C1,"0","M!",1,0)
+    '
+    'Air temp / RH / baro when they arrive, e.g.:
+    '  SDI12Recorder (AirT_C,C1,"1","M!",1,0)
+    '====================================================
+
+    CallTable FiveMin
+  NextScan
+
+  SlowSequence
+  Scan (5,Min,0,0)
+    PostBody = "api_key=" & TS_WRITE_KEY
+    PostBody = PostBody & "&field1=" & FormatFloat (Tank1_m,"%.3f")
+    PostBody = PostBody & "&field2=" & FormatFloat (Tank2_m,"%.3f")
+    PostBody = PostBody & "&field3=" & FormatFloat (RainAccum,"%.1f")
+    PostBody = PostBody & "&field4=" & FormatFloat (BattV,"%.2f")
+    PostBody = PostBody & "&field5=" & FormatFloat (PTemp_C,"%.1f")
+    'Uncomment as the weather sensors come online:
+    'PostBody = PostBody & "&field6=" & FormatFloat (AirT_C,"%.1f")
+    'PostBody = PostBody & "&field7=" & FormatFloat (Baro_hPa,"%.1f")
+    'PostBody = PostBody & "&field8=" & FormatFloat (RH_pct,"%.0f")
+
+    PostResponse = ""
+    PostResult = HTTPPost (TS_URL,PostBody,PostResponse,"Content-Type: application/x-www-form-urlencoded")
+
+    'ThingSpeak answers with the new entry id; "0" means rejected
+    '(bad key or posting faster than the 15 s free-tier limit).
+    LastEntryID = PostResponse
+    If PostResult = 200 AND LastEntryID > 0 Then
+      RainAccum = 0    'clear only after an accepted post — nothing lost on outages
+    EndIf
+  NextScan
+EndProg

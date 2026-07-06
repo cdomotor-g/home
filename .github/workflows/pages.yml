@@ -1,0 +1,42 @@
+name: Deploy dashboard to GitHub Pages
+
+on:
+  # Publish on every push to the default branch
+  push:
+    branches: [main]
+  # …and allow a manual run from the Actions tab
+  workflow_dispatch:
+
+# Least-privilege token: read the repo, write Pages, mint an OIDC token
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One live deployment at a time; don't cancel an in-flight publish
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # The dashboard is a static site served from the repo root
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
