@@ -9,12 +9,17 @@ extra hardware). The first LPU is a Campbell Scientific **CR310** datalogger;
 the architecture leaves room for more (ESP32, Arduino UNO, Raspberry Pi…),
 each on its own ThingSpeak channel. A static dashboard on **GitHub Pages**
 reads everything back, pulls **Open-Meteo** forecasts, and overlays
-*prediction vs actual* on one chart. Collections, sensors, controls and
-setpoints are all managed from a CRUD built into the dashboard.
+*prediction vs actual* on one chart. Camera LPUs publish **time-lapse stills**
+to a git repo and the dashboard shows them per collection. Collections,
+sensors, controls and setpoints are all managed from a CRUD built into the
+dashboard — each collection can carry a custom **icon image** (uploaded or
+pasted) and a camera feed.
 
 > The dashboard boots in **demo mode** with generated data — including a
-> simulated future ESP32 LPU running a mushroom house — until a ThingSpeak
-> channel is configured in **Settings**, so you can explore everything right away.
+> simulated RPi + RTL-SDR weather-station LPU (wind, gusts, outdoor T/RH, a
+> placeholder camera still) and a simulated ESP32 LPU running a mushroom
+> house — until a ThingSpeak channel is configured in **Settings**, so you can
+> explore everything right away.
 
 ## How it fits together
 
@@ -29,20 +34,27 @@ flowchart LR
         S3[Batt V · panel °C] --> CR310
         S4[Air T · RH · baro<br><i>coming soon</i>] --> CR310
     end
-    subgraph LPU2["LPU 2 — ESP32 (planned)"]
+    subgraph LPU2["LPU 2 — RPi + RTL-SDR (planned)"]
+        WX[433 MHz weather station<br>Digitech XC0434:<br>T · RH · wind · gust · dir · rain] -. radio .-> RPI[Raspberry Pi<br>rtl_433]
+        CAM[Camera module<br>time-lapse stills] --> RPI
+    end
+    subgraph LPU3["LPU 3 — ESP32 (planned)"]
         S5[Mushroom house<br>T · RH · CO₂] --> ESP32
     end
     subgraph LPUN["LPU n — Arduino UNO / Raspberry Pi (future)"]
         S6[Hydroponics · garden<br>pH · EC · soil moisture …] --> LPUn[Arduino / RPi]
     end
     CR310 -- "HTTPS POST every 5 min<br>(outbound only — no port forwarding)" --> TS[(ThingSpeak<br>one channel per LPU)]
-    ESP32 -. "same pattern,<br>its own channel" .-> TS
+    RPI -. "same pattern,<br>its own channel" .-> TS
+    RPI -. "stills + manifest.json<br>git push" .-> IMG[(GitHub repo<br>raw / Pages URL)]
+    ESP32 -.-> TS
     LPUn -.-> TS
     TS -- "read API (JSON, CORS)" --> DASH[Dashboard<br>GitHub Pages]
+    IMG -. "manifest + images (CORS)" .-> DASH
     OM[Open-Meteo<br>free forecast API] --> DASH
     TS -. "TalkBack queue per LPU (future):<br>each LPU polls for setpoint/valve commands" .-> CR310
     classDef future stroke-dasharray: 5 5;
-    class LPU2,LPUN,ESP32,LPUn,S5,S6 future;
+    class LPU2,LPU3,LPUN,ESP32,LPUn,S5,S6,WX,CAM,RPI,IMG future;
 ```
 
 Everything is outbound from each LPU and browser-side in the dashboard —
@@ -58,9 +70,10 @@ local logic so it keeps working when the internet doesn't.
 | LPU | Status | Carries |
 |---|---|---|
 | **CR310 datalogger** | ✅ live | Tank levels ×2, rain gauge, battery & panel temp — air T / RH / baro soon |
+| Raspberry Pi + RTL-SDR + camera | 🔜 planned | Receives the 433 MHz consumer weather station (Digitech XC0434: T, RH, wind, gust, direction, rain) via rtl_433, and publishes time-lapse camera stills |
 | ESP32 | 🔜 planned | Mushroom house: temperature, humidity, CO₂ — plus heat-mat / humidifier relays |
 | Arduino UNO (+ WiFi/Ethernet shield) | 💡 candidate | Hydroponics: pH, EC, water temperature, pump control |
-| Raspberry Pi | 💡 candidate | Garden: soil-moisture array, camera, anything needing more compute |
+| Raspberry Pi | 💡 candidate | Garden: soil-moisture array, anything needing more compute |
 
 Adding an LPU never touches the dashboard's code: create a new ThingSpeak
 channel, point the device's firmware at it, then add its sensors in
@@ -99,6 +112,78 @@ it in **Manage** if you wire things differently. Each subsequent LPU gets its
 own channel and field map (e.g. the planned ESP32: field 1 grow-room
 temperature, field 2 humidity, field 3 CO₂).
 
+### Channel field map — weather-station LPU (RPi + RTL-SDR)
+
+| Field | Measurement | Aggregation per upload |
+|---|---|---|
+| 1 | Outdoor temperature (°C) | last reading |
+| 2 | Outdoor humidity (%) | last reading |
+| 3 | Wind speed (m/s) | mean |
+| 4 | Wind gust (m/s) | max |
+| 5 | Wind direction (°) | last reading |
+| 6 | Rain over the interval (mm) | delta of the station's cumulative counter |
+| 7 | Sensor battery OK (1/0) | last reading |
+| 8 | Packets decoded | count — a cheap RF-link health metric |
+
+The dashboard's default **Backyard station** collection maps fields 1–5 out of
+the box (with demo data until the Pi is online); add field 6–8 sensors in
+**Manage** whenever you want them charted.
+
+## 433 MHz weather station → RTL-SDR (planned LPU)
+
+The station is a **Digitech XC0434** (Electus/Jaycar): an outdoor sensor
+array (anemometer, wind vane, tipping rain gauge, T/RH in a radiation
+shield) that broadcasts to its indoor display on **433 MHz**. Those packets
+are one-way and unencrypted, so a Raspberry Pi with an **RTL-SDR Blog V3**
+dongle can ingest them passively — the display keeps working, nothing is
+modified, and the station needs no WiFi of its own.
+
+1. **Hardware**: any Raspberry Pi + RTL-SDR Blog V3 (or similar RTL2832U
+   dongle) + the small antenna it ships with. Indoors within range is fine.
+2. **Decode**: `sudo apt install rtl-433`, then run `rtl_433 -f 433.92M -F json`
+   and watch the JSON lines. XC0434-family stations are typically decoded out
+   of the box by one of rtl_433's Fine Offset–style protocols — note the
+   `model` string yours reports.
+3. **Bridge**: adapt [`logger/rpi_rtl433_thingspeak.py`](logger/rpi_rtl433_thingspeak.py) —
+   drop in the channel's Write key and that `model` string as the filter. It
+   aggregates packets (mean wind, max gust, rain-counter delta) and posts to
+   ThingSpeak every 5 minutes, exactly like the CR310. A systemd unit for
+   running it forever is in the script's docstring.
+4. **Dashboard**: create the ThingSpeak channel with the field map above,
+   then in **Manage** set the Backyard-station sensors' *channel override*
+   from `demo-rtl433` to the real channel ID. The demo badge disappears and
+   real wind/temperature data flows.
+
+## Camera images (time-lapse stills)
+
+Camera LPUs (a Pi with a camera module) publish stills on an interval; the
+dashboard shows the latest image and recent history as a card inside the
+collection — the "sensor suite" view you set up in **Manage**.
+
+Because there is no server, images ride the same free-static-hosting trick as
+everything else: the Pi **git-pushes** each still plus a `manifest.json` to a
+(small, public) GitHub repo, and the dashboard fetches them via
+`raw.githubusercontent.com` (CORS-friendly, like ThingSpeak and Open-Meteo).
+
+1. Create a repo for images (e.g. `home-images`) with one folder per camera,
+   and clone it on the Pi with push access (deploy key or PAT).
+2. Adapt [`logger/rpi_camera_publish.py`](logger/rpi_camera_publish.py): it
+   captures with `rpicam-still`, appends to the manifest, prunes old frames
+   (default: keep 48), commits and pushes. Schedule it with cron — an example
+   crontab line is in the docstring.
+3. In **Manage → Edit collection**, set the **camera manifest URL**, e.g.
+   `https://raw.githubusercontent.com/YOURUSER/home-images/main/backyard/manifest.json`.
+
+Manifest format (anything that writes this JSON can feed the dashboard —
+the git trick is just the zero-cost default):
+
+```json
+{ "images": [ { "file": "2026-07-06T08-00-00.jpg", "t": "2026-07-06T08:00:00+10:00" } ] }
+```
+
+`file` is resolved relative to the manifest URL; absolute URLs work too, so a
+NAS, S3 bucket or any CORS-enabled host can serve the images instead.
+
 ## Getting live data flowing
 
 1. **Create a ThingSpeak channel** (free account at thingspeak.com) with the
@@ -130,12 +215,17 @@ channel override.
   solid and the forecast dashed on the *same* chart, spanning the past 3 days
   and next 4, so you can see how the prediction tracked reality. Rain compares
   daily totals side-by-side.
+- **Camera cards** — collections with a camera manifest URL show the latest
+  still, its timestamp, and a thumbnail strip of recent frames (placeholder
+  scene until the camera LPU is publishing).
 - **Manage (CRUD)** — collections for areas/systems around the place (water,
   weather, mushroom house, hydroponics…), each holding **sensors** (name, unit,
   type, ThingSpeak field, alert range, forecast mapping, optional per-sensor
   channel override for sensors living on other LPUs) and **controls** (heater / cooler /
   fan / valve / humidifier / pump, linked sensor, auto/manual mode,
-  **setpoint + deadband**, on-below or on-above behaviour).
+  **setpoint + deadband**, on-below or on-above behaviour). Every collection
+  can have a custom **icon** — an emoji, or any image uploaded / pasted
+  straight into the form (shrunk to 96 px and stored with the config).
 - **Light & dark theme**, phone-friendly, no build step, no dependencies.
 
 Dashboard configuration lives in the browser's localStorage; **Settings →
@@ -166,9 +256,11 @@ you edit the numbers.
 |---|---|
 | [`index.html`](index.html) | The whole dashboard — a single self-contained file served by GitHub Pages |
 | [`logger/CR310_ThingSpeak.CR300`](logger/CR310_ThingSpeak.CR300) | LPU 1 firmware — CRBasic template: measurements + rain accumulation + `HTTPPost` to ThingSpeak |
+| [`logger/rpi_rtl433_thingspeak.py`](logger/rpi_rtl433_thingspeak.py) | Weather-station LPU — RPi script: rtl_433 JSON → aggregate → ThingSpeak (stdlib only) |
+| [`logger/rpi_camera_publish.py`](logger/rpi_camera_publish.py) | Camera LPU — RPi script: capture a still, update `manifest.json`, prune, git push |
 
 Firmware for each future LPU (ESP32 sketch, Arduino sketch, Pi script…) lands
-in [`logger/`](logger) alongside the CR310 program — one file per LPU.
+in [`logger/`](logger) alongside these — one file per LPU.
 
 *Dashboard URL note: served by GitHub Pages from the default branch — if Pages
 is set to “Deploy from a branch”, it goes live once this lands on `main`.*
