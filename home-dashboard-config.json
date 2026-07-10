@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "settings": {
+    "thingspeak": {
+      "channelId": "3424617",
+      "readKey": "EFGTI36XLPW7R19U",
+      "uploadIntervalMin": 15
+    },
+    "location": {
+      "lat": 27.39011,
+      "lon": 152.779012,
+      "label": ""
+    },
+    "theme": "dark",
+    "forceDemo": false,
+    "kiosk": {
+      "dwellSec": 12,
+      "loop": true,
+      "shuffle": false,
+      "fullscreen": true,
+      "autostart": false,
+      "hidden": []
+    }
+  },
+  "collections": [
+    {
+      "id": "water",
+      "name": "Water tanks",
+      "icon": "💧",
+      "sensors": [
+        {
+          "id": "tank1",
+          "name": "Tank 1",
+          "unit": "m",
+          "kind": "level",
+          "field": 1,
+          "slot": 1,
+          "decimals": 2,
+          "min": 0.3,
+          "max": null,
+          "forecastKey": ""
+        },
+        {
+          "id": "tank2",
+          "name": "Tank 2",
+          "unit": "m",
+          "kind": "level",
+          "field": 2,
+          "slot": 2,
+          "decimals": 2,
+          "min": 0.3,
+          "max": null,
+          "forecastKey": ""
+        }
+      ],
+      "controls": []
+    },
+    {
+      "id": "weather",
+      "name": "LPU1 Atmos",
+      "icon": "🌦️",
+      "sensors": [
+        {
+          "id": "rain",
+          "name": "Rain gauge",
+          "unit": "mm",
+          "kind": "rain",
+          "field": 3,
+          "slot": 1,
+          "decimals": 1,
+          "min": null,
+          "max": null,
+          "forecastKey": "precipitation"
+        },
+        {
+          "id": "airt",
+          "name": "Air temperature",
+          "unit": "°C",
+          "kind": "temperature",
+          "field": 6,
+          "slot": 2,
+          "decimals": 1,
+          "min": null,
+          "max": null,
+          "forecastKey": "temperature_2m"
+        },
+        {
+          "id": "baro",
+          "name": "Barometric pressure",
+          "unit": "hPa",
+          "kind": "pressure",
+          "field": 7,
+          "slot": 3,
+          "decimals": 1,
+          "min": null,
+          "max": null,
+          "forecastKey": "surface_pressure"
+        },
+        {
+          "id": "rh",
+          "name": "Humidity",
+          "unit": "%",
+          "kind": "humidity",
+          "field": 8,
+          "slot": 4,
+          "decimals": 0,
+          "min": null,
+          "max": null,
+          "forecastKey": "relative_humidity_2m"
+        }
+      ],
+      "controls": [],
+      "iconImg": null
+    },
+    {
+      "id": "logger",
+      "name": "LPU1 Logger health",
+      "icon": "🔋",
+      "sensors": [
+        {
+          "id": "batt",
+          "name": "Battery",
+          "unit": "V",
+          "kind": "voltage",
+          "field": 4,
+          "slot": 1,
+          "decimals": 2,
+          "min": 11.5,
+          "max": 15,
+          "forecastKey": ""
+        },
+        {
+          "id": "ptemp",
+          "name": "Panel temperature",
+          "unit": "°C",
+          "kind": "temperature",
+          "field": 5,
+          "slot": 2,
+          "decimals": 1,
+          "min": null,
+          "max": null,
+          "forecastKey": ""
+        }
+      ],
+      "controls": [],
+      "iconImg": null
+    }
+  ]
+}
