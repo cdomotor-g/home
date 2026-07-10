@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "settings": {
     "thingspeak": {
       "channelId": "3424617",
@@ -144,6 +144,57 @@
       ],
       "controls": [],
       "iconImg": null
+    },
+    {
+      "id": "mreje0jgo8kbq",
+      "name": "LPU2 External",
+      "icon": "🌦️",
+      "iconImg": null,
+      "sensors": [
+        {
+          "id": "mrejglvl2436w",
+          "slot": 1,
+          "name": "External Air Temperature",
+          "unit": "degC",
+          "kind": "temperature",
+          "field": 1,
+          "decimals": 1,
+          "min": null,
+          "max": null,
+          "forecastKey": "temperature_2m",
+          "channelId": "3425088",
+          "readKey": "22KKEIC5ZVALKODV"
+        },
+        {
+          "id": "mrejigy8ysv89",
+          "slot": 2,
+          "name": "External RH",
+          "unit": "%",
+          "kind": "humidity",
+          "field": 2,
+          "decimals": 1,
+          "min": null,
+          "max": null,
+          "forecastKey": "relative_humidity_2m",
+          "channelId": "3425088",
+          "readKey": "22KKEIC5ZVALKODV"
+        },
+        {
+          "id": "mrejk0u2iglib",
+          "slot": 3,
+          "name": "Digital rain",
+          "unit": "mm",
+          "kind": "rain",
+          "field": 3,
+          "decimals": 1,
+          "min": null,
+          "max": null,
+          "forecastKey": "",
+          "channelId": "3425088",
+          "readKey": "22KKEIC5ZVALKODV"
+        }
+      ],
+      "controls": []
     }
   ]
 }
