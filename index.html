@@ -276,6 +276,11 @@ const fmtFull = t => new Date(t).toLocaleString([],{weekday:'short',day:'numeric
 
 /* ---------- config store ---------- */
 const CFG_KEY = 'homedash.config.v1';
+const CFG_ORIGIN_KEY = 'homedash.config.origin';
+/* the repo-committed config, served alongside this page — loaded by default
+   until the user reverts to demo data, imports a different file, or edits
+   something (which then persists to localStorage and takes over on reload) */
+const CONFIG_URL = 'home-dashboard-config.json';
 const KINDS = ['level','temperature','rain','voltage','pressure','humidity','wind','direction','other'];
 const KIND_DEC = {level:2, temperature:1, rain:1, voltage:2, pressure:1, humidity:0, wind:1, direction:0, other:2};
 const FC_KEYS = [
@@ -347,14 +352,36 @@ function defaultConfig(){
   };
 }
 let config;
-function loadConfig(){
+/* where the current config came from: 'repo' | 'demo' | 'import' | 'local'
+   (a previously saved config from before this field existed) */
+let configOrigin = 'repo';
+async function loadConfig(){
   try {
     const raw = localStorage.getItem(CFG_KEY);
-    if (raw){ const c = JSON.parse(raw); if (c && c.collections) return c; }
+    if (raw){
+      const c = JSON.parse(raw);
+      if (c && Array.isArray(c.collections)){
+        configOrigin = localStorage.getItem(CFG_ORIGIN_KEY) || 'local';
+        return c;
+      }
+    }
   } catch(e){ /* private mode etc. */ }
+  try {
+    const res = await fetch(CONFIG_URL, {cache:'no-store'});
+    if (res.ok){
+      const c = await res.json();
+      if (c && Array.isArray(c.collections)){ configOrigin = 'repo'; return c; }
+    }
+  } catch(e){ /* offline, opened via file://, or the file isn't there — fall back to demo */ }
+  configOrigin = 'demo';
   return defaultConfig();
 }
 function saveConfig(){ try { localStorage.setItem(CFG_KEY, JSON.stringify(config)); } catch(e){} }
+function adoptConfig(c, origin){
+  config = c; configOrigin = origin;
+  try { localStorage.setItem(CFG_ORIGIN_KEY, origin); } catch(e){}
+  saveConfig();
+}
 const allSensors = () => config.collections.flatMap(c => c.sensors);
 const findSensor = id => allSensors().find(s => s.id===id);
 function nextSlot(coll){
@@ -1443,26 +1470,42 @@ function renderSettings(){
       try {
         const c=JSON.parse(txt);
         if (!c||!Array.isArray(c.collections)) throw new Error('not a dashboard config');
-        config=c; saveConfig(); refreshData().then(()=>{ refreshForecast().then(render); });
+        adoptConfig(c,'import'); refreshData().then(()=>{ refreshForecast().then(render); });
         alert('Config imported.');
       } catch(e){ alert('Import failed: '+e.message); }
     });
   });
+  const originLabel = {
+    repo:`the repo’s ${CONFIG_URL}`, demo:'built-in demo data',
+    import:'an imported file', local:'a previously saved browser config',
+  }[configOrigin] || 'this browser';
   grid.append(el('section',{class:'card'},
     el('h3',{},'Configuration'),
-    el('p',{class:'help'},'Collections, sensors, controls and settings are stored in this browser (localStorage). Export a JSON backup — or to sync another device, import it there.'),
-    el('div',{class:'actions',style:'justify-content:flex-start;margin-top:10px'},
+    el('p',{class:'note'},'Currently loaded from ', el('strong',{},originLabel), '.'),
+    el('p',{class:'help'},`This dashboard loads ${CONFIG_URL} from the repo by default. Any edit you make (here, in Manage, or by importing a file) is then saved in this browser and takes over on future visits — export a JSON backup, or revert to the repo config or demo data below.`),
+    el('div',{class:'actions',style:'justify-content:flex-start;margin-top:10px;flex-wrap:wrap'},
       el('button',{class:'btn',onclick:()=>{
         const blob=new Blob([JSON.stringify(config,null,2)],{type:'application/json'});
-        const a=el('a',{href:URL.createObjectURL(blob),download:'home-dashboard-config.json'});
+        const a=el('a',{href:URL.createObjectURL(blob),download:CONFIG_URL});
         document.body.append(a); a.click(); a.remove();
       }},'Export config'),
+      el('button',{class:'btn',onclick:async()=>{
+        if (!confirm(`Reload ${CONFIG_URL} from the repo? This replaces the config currently loaded in this browser.`)) return;
+        try {
+          const res=await fetch(CONFIG_URL,{cache:'no-store'});
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const c=await res.json();
+          if (!c||!Array.isArray(c.collections)) throw new Error('not a dashboard config');
+          adoptConfig(c,'repo');
+          await refreshData(); await refreshForecast(); render();
+        } catch(e){ alert('Reload failed: '+(e.message||e)); }
+      }},'↻ Reload repo config'),
       el('button',{class:'btn danger',onclick:()=>{
-        if (confirm('Reset all collections, sensors, controls and settings to defaults?')){
-          config=defaultConfig(); saveConfig();
+        if (confirm('Discard the config currently loaded in this browser and switch to the built-in demo data?')){
+          adoptConfig(defaultConfig(),'demo');
           refreshData().then(()=>{ refreshForecast().then(render); });
-        }}},'Reset to defaults')),
-    el('label',{},'Import config'), fileIn));
+        }}},'Revert to demo data')),
+    el('label',{},'Import a different config'), fileIn));
   view.append(grid);
 }
 
@@ -1822,7 +1865,7 @@ function render(){
 }
 addEventListener('hashchange',render);
 (async function boot(){
-  config=loadConfig();
+  config=await loadConfig();
   /* backfill kiosk settings for configs saved before the carousel existed */
   config.settings.kiosk = Object.assign(
     { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[] },

@@ -9,6 +9,17 @@ description: Drive the static dashboard (index.html) in headless Chromium and ca
 No build step. It boots in **demo mode** (deterministic generated data) whenever
 no ThingSpeak channel is configured, so it runs fully offline.
 
+On boot it tries, in order: (1) a config saved in `localStorage` from a previous
+edit/import/revert, (2) `fetch('home-dashboard-config.json')` — the repo's
+committed config, (3) the built-in demo config. Opening the page via `file://`
+(as below) makes step 2's `fetch` fail (Chromium blocks it under file:// —
+CORS), so a plain `file://` launch always falls through to demo mode, same as
+before this fetch step existed. To exercise the repo-config-loads-by-default
+path, serve the directory over HTTP first (e.g. `python3 -m http.server` in
+the repo root) and `goto` `http://localhost:PORT/index.html` instead — that
+config has a real ThingSpeak channel ID, so expect a `.badge.err` for the
+blocked network fetch in the sandbox, not a crash.
+
 ## Launch & drive
 
 ```bash
