@@ -240,6 +240,21 @@ table.data td{padding:4px 10px;text-align:right;font-variant-numeric:tabular-num
    Config (collections / sensors / controls / setpoints): localStorage.
    ===================================================================== */
 
+/* ---------- old-browser support: no ?./?? syntax anywhere below (old
+   Samsung Internet / Opera Mini throw a SyntaxError on those tokens, which
+   kills this entire classic script before anything can run) ---------- */
+function nz(v, fallback){ return (v===null || v===undefined) ? fallback : v; }
+if (!Array.prototype.flat) {
+  Array.prototype.flat = function(d){ d = d===undefined?1:d;
+    return this.reduce(function(a,v){ return a.concat(Array.isArray(v)&&d>0 ? v.flat(d-1) : v); }, []); };
+}
+if (!Array.prototype.flatMap) {
+  Array.prototype.flatMap = function(fn, ctx){ return this.map(fn, ctx).flat(1); };
+}
+if (!Object.entries) {
+  Object.entries = function(o){ return Object.keys(o).map(function(k){ return [k, o[k]]; }); };
+}
+
 /* ---------- tiny DOM helpers (textContent only — never innerHTML) ---------- */
 function el(tag, attrs, ...kids){
   const n = document.createElement(tag);
@@ -476,7 +491,7 @@ async function refreshData(){
       const rows = genDemoRows(range.days, 0);
       for (const s of allSensors()){
         if (!s.field) continue;
-        const idx = (DEMO_LPU_OFFSET[s.channelId||''] ?? 0) + s.field - 1;
+        const idx = nz(DEMO_LPU_OFFSET[s.channelId||''], 0) + s.field - 1;
         const pts = [];
         for (const r of rows){ const v = r.f[idx]; if (v!=null) pts.push([r.t, +v.toFixed(3)]); }
         bySensor.set(s.id, pts);
@@ -1060,18 +1075,18 @@ function renderDashboard(){
         const today=pts.filter(p=>p[0]>=midnight.getTime()).reduce((a,p)=>a+p[1],0);
         const yest=pts.filter(p=>p[0]>=midnight.getTime()-864e5&&p[0]<midnight.getTime()).reduce((a,p)=>a+p[1],0);
         tile.append(el('div',{class:'lbl'},'Rain today'),
-          el('div',{class:'val'}, fmtVal(today,s.decimals??1), el('span',{class:'unit'},s.unit)),
+          el('div',{class:'val'}, fmtVal(today,nz(s.decimals,1)), el('span',{class:'unit'},s.unit)),
           el('div',{class:'delta'},`yesterday ${fmtVal(yest,1)} ${s.unit}`));
       } else {
         tile.append(el('div',{class:'lbl'},s.name),
-          el('div',{class:'val'}, last?fmtVal(last[1],s.decimals??2):'–', el('span',{class:'unit'},s.unit)));
+          el('div',{class:'val'}, last?fmtVal(last[1],nz(s.decimals,2)):'–', el('span',{class:'unit'},s.unit)));
         if (last){
           const prev=valueAt(pts,last[0]-864e5,3*36e5);
           if (prev!=null){
             const d=last[1]-prev;
             const cls = s.kind==='voltage' ? (d>=0?'up':'down') : '';
             tile.append(el('div',{class:'delta '+cls},
-              `${d>=0?'▲':'▼'} ${fmtVal(Math.abs(d),s.decimals??2)} vs 24 h ago`));
+              `${d>=0?'▲':'▼'} ${fmtVal(Math.abs(d),nz(s.decimals,2))} vs 24 h ago`));
           }
           if (s.min!=null&&last[1]<s.min) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ below min'));
           else if (s.max!=null&&last[1]>s.max) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ above max'));
@@ -1099,7 +1114,7 @@ function renderDashboard(){
       const series=ss.map(s=>({name:s.name,color:sensorColor(s),
         points:state.data.bySensor.get(s.id)||[], wash:ss.length===1}));
       if (!series.some(s=>s.points.length) && ss.every(s=>!state.data.bySensor.get(s.id))) continue;
-      const dec=ss[0].decimals ?? KIND_DEC[ss[0].kind] ?? 1;
+      const dec=nz(ss[0].decimals, nz(KIND_DEC[ss[0].kind], 1));
       grid.append(chartCard({
         title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
         sub: unit, series,
@@ -1175,7 +1190,7 @@ function renderForecastView(){
   for (const s of mapped){
     const fpts=(state.forecast.byKey[s.forecastKey]||[]).filter(p=>p[0]>=t0&&p[0]<=t1);
     const apts=(state.data.bySensor.get(s.id)||[]).filter(p=>p[0]>=t0);
-    const dec=s.decimals ?? KIND_DEC[s.kind] ?? 1;
+    const dec=nz(s.decimals, nz(KIND_DEC[s.kind], 1));
     if (s.kind==='rain'||s.forecastKey==='precipitation'){
       const catsA=bucketTotals(apts,'day',t0,now);
       const catsF=bucketTotals(fpts,'day',t0,t1);
@@ -1210,7 +1225,7 @@ function renderManage(){
     const card=el('section',{class:'card'});
     card.append(el('div',{class:'card-head'},
       collIcon(coll), el('h3',{},coll.name),
-      coll.camera?.manifestUrl ? el('span',{class:'mi'},'📷 '+(coll.camera.label||'camera')) : null,
+      (coll.camera && coll.camera.manifestUrl) ? el('span',{class:'mi'},'📷 '+(coll.camera.label||'camera')) : null,
       el('div',{class:'spacer'}),
       el('button',{class:'ghost',title:'Move up',onclick:()=>{ if(ci>0){ const a=config.collections;
         [a[ci-1],a[ci]]=[a[ci],a[ci-1]]; saveConfig(); render(); } }},'↑'),
@@ -1293,7 +1308,7 @@ function openForm(title, fields, values, onSave){
   }});
   form.append(el('h3',{},title));
   for (const f of fields){
-    const v=values?.[f.key];
+    const v=values ? values[f.key] : undefined;
     let inp;
     if (f.type==='image'){
       /* stored as a data URI in a hidden input; set via file upload or paste */
@@ -1304,7 +1319,7 @@ function openForm(title, fields, values, onSave){
       const set=url=>{ inp.value=url; prev.src=url; prev.style.display=''; };
       file.addEventListener('change',()=>{ if (file.files[0]) shrinkImage(file.files[0],96,set); });
       form.addEventListener('paste',e=>{
-        const it=[...(e.clipboardData?.items||[])].find(i=>i.type.startsWith('image/'));
+        const it=[...((e.clipboardData && e.clipboardData.items)||[])].find(i=>i.type.startsWith('image/'));
         if (it){ e.preventDefault(); shrinkImage(it.getAsFile(),96,set); }
       });
       form.append(el('div',{}, el('label',{},f.label),
@@ -1315,7 +1330,7 @@ function openForm(title, fields, values, onSave){
       continue;
     }
     if (f.type==='select') inp=el('select',{name:f.key},
-      f.options.map(o=>{ const opt=el('option',{value:o.v},o.l); if (String(v??'')===String(o.v)) opt.selected=true; return opt; }));
+      f.options.map(o=>{ const opt=el('option',{value:o.v},o.l); if (String(nz(v,''))===String(o.v)) opt.selected=true; return opt; }));
     else if (f.type==='checkbox') inp=el('input',{type:'checkbox',name:f.key});
     else inp=el('input',{type:f.type||'text',name:f.key,step:f.step,min:f.min,max:f.max,
       placeholder:f.placeholder, value: v==null?'':String(v)});
@@ -1357,7 +1372,7 @@ function collectionForm(coll){
       help:'Stills published by a camera LPU. Non-http values act as placeholders until that LPU is online. Manifest format + publisher script: README → Camera images.'},
     {key:'camLabel',label:'Camera label (optional)',placeholder:'e.g. Backyard camera'},
   ], coll ? { name:coll.name, icon:coll.icon, iconImg:coll.iconImg||'',
-              camUrl:coll.camera?.manifestUrl||'', camLabel:coll.camera?.label||'' }
+              camUrl:(coll.camera && coll.camera.manifestUrl)||'', camLabel:(coll.camera && coll.camera.label)||'' }
           : { icon:'📦' },
   out=>{
     if (!out.name) return false;
@@ -1443,8 +1458,8 @@ function renderSettings(){
         saveConfig(); await refreshData(); await refreshForecast(); render();
       }},'Save & reload data'))));
   /* location */
-  const lat=el('input',{type:'number',step:'any',value:loc.lat??'',placeholder:'-27.47'});
-  const lon=el('input',{type:'number',step:'any',value:loc.lon??'',placeholder:'153.02'});
+  const lat=el('input',{type:'number',step:'any',value:nz(loc.lat,''),placeholder:'-27.47'});
+  const lon=el('input',{type:'number',step:'any',value:nz(loc.lon,''),placeholder:'153.02'});
   const lbl=el('input',{value:loc.label||'',placeholder:'Home'});
   grid.append(el('section',{class:'card'},
     el('h3',{},'Forecast location — Open-Meteo'),
@@ -1453,7 +1468,7 @@ function renderSettings(){
     el('label',{},'Label'), lbl,
     el('div',{class:'actions',style:'margin-top:14px'},
       el('button',{class:'btn',onclick:()=>{
-        navigator.geolocation?.getCurrentPosition(p=>{
+        if (navigator.geolocation) navigator.geolocation.getCurrentPosition(p=>{
           lat.value=p.coords.latitude.toFixed(4); lon.value=p.coords.longitude.toFixed(4);
         },()=>alert('Could not read location — enter it manually.'));
       }},'Use my location'),
@@ -1530,7 +1545,7 @@ function buildSlides(){
     for (const [unit,ss] of byUnit){
       const series=ss.map(s=>({name:s.name,color:sensorColor(s),
         points:state.data.bySensor.get(s.id)||[], wash:ss.length===1}));
-      const dec=ss[0].decimals ?? KIND_DEC[ss[0].kind] ?? 1;
+      const dec=nz(ss[0].decimals, nz(KIND_DEC[ss[0].kind], 1));
       slides.push({id:`${coll.id}|u|${unit}`, group:coll.name,
         title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
         sub:unit, kind:'line', series, unit, dec,
@@ -1555,7 +1570,7 @@ function buildSlides(){
     const fpts=(state.forecast.byKey[s.forecastKey]||[]).filter(p=>p[0]>=t0&&p[0]<=t1);
     const apts=(state.data.bySensor.get(s.id)||[]).filter(p=>p[0]>=t0);
     if (!fpts.length && !apts.length) continue;
-    const dec=s.decimals ?? KIND_DEC[s.kind] ?? 1;
+    const dec=nz(s.decimals, nz(KIND_DEC[s.kind], 1));
     if (s.kind==='rain'||s.forecastKey==='precipitation'){
       const catsA=bucketTotals(apts,'day',t0,now), catsF=bucketTotals(fpts,'day',t0,t1);
       const labels=catsF.length?catsF:catsA;
@@ -1849,7 +1864,8 @@ document.getElementById('theme-btn').addEventListener('click',()=>{
   config.settings.theme=order[(order.indexOf(cur)+1)%order.length];
   saveConfig(); applyTheme(); render();
 });
-matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{ applyTheme(); render(); });
+var _mq = matchMedia('(prefers-color-scheme: dark)');
+if (_mq.addEventListener) _mq.addEventListener('change',()=>{ applyTheme(); render(); });
 document.getElementById('kiosk-btn').addEventListener('click', openKiosk);
 
 /* ---------- router & boot ---------- */
@@ -1865,20 +1881,27 @@ function render(){
 }
 addEventListener('hashchange',render);
 (async function boot(){
-  config=await loadConfig();
-  /* backfill kiosk settings for configs saved before the carousel existed */
-  config.settings.kiosk = Object.assign(
-    { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[] },
-    config.settings.kiosk||{});
-  applyTheme();
-  renderTabs();
-  view.append(el('div',{class:'card'},el('p',{class:'note'},'Loading…')));
-  await refreshData();
-  await refreshForecast();
-  render();
-  if (config.settings.kiosk.autostart || location.hash==='#kiosk-play') openKiosk();
-  setInterval(async()=>{ await refreshData(); if (currentTab()==='dashboard') render(); }, 5*60000);
-  setInterval(async()=>{ await refreshForecast(); if (currentTab()==='forecast') render(); }, 30*60000);
+  try {
+    config=await loadConfig();
+    /* backfill kiosk settings for configs saved before the carousel existed */
+    config.settings.kiosk = Object.assign(
+      { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[] },
+      config.settings.kiosk||{});
+    applyTheme();
+    renderTabs();
+    view.append(el('div',{class:'card'},el('p',{class:'note'},'Loading…')));
+    await refreshData();
+    await refreshForecast();
+    render();
+    if (config.settings.kiosk.autostart || location.hash==='#kiosk-play') openKiosk();
+    setInterval(async()=>{ await refreshData(); if (currentTab()==='dashboard') render(); }, 5*60000);
+    setInterval(async()=>{ await refreshForecast(); if (currentTab()==='forecast') render(); }, 30*60000);
+  } catch(err){
+    view.textContent = '';
+    view.append(el('div',{class:'card'},
+      el('p',{class:'note'}, 'This dashboard failed to load: '+((err && err.message) || err)+
+        '. Your browser may be missing a feature it needs — try updating it or using a different browser.')));
+  }
 })();
 </script>
 </body>
