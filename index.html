@@ -115,6 +115,7 @@ nav.tabs a.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600
 .tile .val .unit{font-size:.8rem;font-weight:400;color:var(--muted);margin-left:3px}
 .tile .delta{font-size:.75rem;color:var(--ink2);margin-top:1px}
 .tile .delta.up{color:var(--good-text)} .tile .delta.down{color:var(--crit)}
+.tile .delta.day{color:var(--muted)}
 .tile .status{font-size:.75rem;font-weight:600;margin-top:1px}
 .tile svg{display:block;margin-top:6px}
 /* ---------- charts ---------- */
@@ -680,6 +681,14 @@ function valueAt(pts, t, tolMs){
   const i = nearestIdx(pts.map(p=>p[0]), t);
   return Math.abs(pts[i][0]-t) <= tolMs ? pts[i][1] : null;
 }
+/* value as of the most recent midnight — the baseline for a "since midnight" delta that resets to 0 each day */
+function dayBaseline(pts){
+  if (!pts || !pts.length) return null;
+  const t0=new Date(); t0.setHours(0,0,0,0);
+  const midnight=t0.getTime();
+  for (let i=pts.length-1;i>=0;i--){ if (pts[i][0]<=midnight) return pts[i][1]; }
+  return pts[0][1]; /* no data before midnight yet — first reading of the day is our starting point */
+}
 function nearestIdx(times, t){
   let lo=0, hi=times.length-1;
   while (hi-lo > 1){ const mid=(lo+hi)>>1; (times[mid] < t) ? lo=mid : hi=mid; }
@@ -1087,6 +1096,14 @@ function renderDashboard(){
             const cls = s.kind==='voltage' ? (d>=0?'up':'down') : '';
             tile.append(el('div',{class:'delta '+cls},
               `${d>=0?'▲':'▼'} ${fmtVal(Math.abs(d),nz(s.decimals,2))} vs 24 h ago`));
+          }
+          if (s.kind==='level'){
+            const base=dayBaseline(pts);
+            if (base!=null){
+              const dd=last[1]-base;
+              tile.append(el('div',{class:'delta day'},
+                `${dd>=0?'▲':'▼'} ${fmtVal(Math.abs(dd),nz(s.decimals,2))} today (since midnight)`));
+            }
           }
           if (s.min!=null&&last[1]<s.min) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ below min'));
           else if (s.max!=null&&last[1]>s.max) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ above max'));
