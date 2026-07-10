@@ -131,18 +131,20 @@ def main():
 
     for line in proc.stdout:
         line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if MODEL_FILTER and rec.get("model") != MODEL_FILTER:
-            continue
-        if ID_FILTER is not None and rec.get("id") != ID_FILTER:
-            continue
-        agg.add(rec)
+        if line.startswith("{"):
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                rec = None
+            if rec is not None:
+                matches_model = not MODEL_FILTER or rec.get("model") == MODEL_FILTER
+                matches_id = ID_FILTER is None or rec.get("id") == ID_FILTER
+                if matches_model and matches_id:
+                    agg.add(rec)
+                    print(f"packet #{agg.packets}: model={rec.get('model')} id={rec.get('id')}", flush=True)
 
+        # Checked on every line (not just matching packets) so a filter
+        # mismatch or a quiet station can't stall the upload schedule.
         if time.time() < next_post:
             continue
         next_post += UPLOAD_INTERVAL_MIN * 60
