@@ -168,6 +168,48 @@ table.data td{padding:4px 10px;text-align:right;font-variant-numeric:tabular-num
   .tiles{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
   .tile .val{font-size:1.25rem}
 }
+/* ---------- carousel config (Carousel tab) ---------- */
+.chkline{display:flex;align-items:center;gap:8px;margin:10px 0 0}
+.chkline input{width:auto;margin:0}
+.krow{display:flex;align-items:center;gap:10px;padding:6px 2px;border-bottom:1px solid var(--grid);margin:0}
+.krow:last-child{border-bottom:none}
+.krow input{width:auto;margin:0}
+.krow .nm{font-weight:500}
+/* ---------- kiosk / carousel overlay ---------- */
+#kiosk{position:fixed;inset:0;z-index:80;background:var(--page);color:var(--ink);
+  display:none;flex-direction:column}
+#kiosk.on{display:flex}
+#kiosk.idle{cursor:none}
+#kiosk .k-top{height:3px;background:var(--grid);flex:0 0 auto}
+#kiosk .k-top>i{display:block;height:100%;width:0;background:var(--accent)}
+#kiosk .k-stage{flex:1;min-height:0;display:flex;align-items:stretch;justify-content:center;padding:20px 26px}
+#kiosk .k-slide{width:100%;max-width:1500px;display:flex;flex-direction:column;min-height:0}
+#kiosk .k-cap{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:0 0 8px}
+#kiosk .k-cap .grp{color:var(--muted);font-size:.85rem;text-transform:uppercase;letter-spacing:.05em}
+#kiosk .k-cap h2{font-size:1.45rem}
+#kiosk .k-cap .sub{color:var(--muted);font-size:.9rem}
+#kiosk .k-legend{display:flex;gap:16px;flex-wrap:wrap;margin:0 0 8px;font-size:.95rem;color:var(--ink2)}
+#kiosk .k-legend .key{display:inline-flex;align-items:center;gap:7px}
+#kiosk .k-chart{flex:1;min-height:0;position:relative}
+#kiosk .k-chart svg{display:block}
+#kiosk .k-cam{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:8px;min-height:0}
+#kiosk .k-cam img,#kiosk .k-cam .cam-main{max-width:100%;max-height:100%;object-fit:contain;border-radius:10px}
+#kiosk .k-cam .cam-main{width:auto}
+#kiosk .k-cam .cam-main svg{max-width:100%;max-height:72vh;width:auto;height:auto}
+#kiosk .k-cam .cap{color:var(--muted);font-size:.85rem}
+#kiosk .k-empty{margin:auto;color:var(--muted);text-align:center;max-width:460px}
+#kiosk .k-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 16px;
+  border-top:1px solid var(--border);background:var(--surface);transition:opacity .3s}
+#kiosk.idle .k-bar{opacity:0;pointer-events:none}
+#kiosk .k-count{font-variant-numeric:tabular-nums;color:var(--ink2);font-size:.85rem}
+#kiosk .k-title{color:var(--muted);font-size:.85rem;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:38vw}
+#kiosk .k-bar .spacer{flex:1}
+#kiosk .k-clock{font-variant-numeric:tabular-nums;color:var(--ink2);font-size:.9rem}
+#kiosk .kbtn{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:7px 12px;font-size:.95rem;line-height:1;color:inherit}
+#kiosk .kbtn:hover{background:var(--tint)}
 </style>
 </head>
 <body>
@@ -177,6 +219,7 @@ table.data td{padding:4px 10px;text-align:right;font-variant-numeric:tabular-num
     <span class="sub">sensors &amp; automation</span>
     <span id="src-badge"></span>
     <div class="spacer"></div>
+    <button class="btn" id="kiosk-btn" title="Start the full-screen plot carousel">▷ Carousel</button>
     <button class="btn" id="theme-btn" title="Cycle theme: auto / light / dark">◐ Theme</button>
   </header>
   <nav class="tabs" id="tabs"></nav>
@@ -184,6 +227,7 @@ table.data td{padding:4px 10px;text-align:right;font-variant-numeric:tabular-num
 </div>
 <div id="tip" role="status" aria-live="polite"></div>
 <div id="modal-bg"><div id="modal" role="dialog" aria-modal="true"></div></div>
+<div id="kiosk" role="region" aria-label="Plot carousel"></div>
 <noscript><p style="padding:20px">This dashboard needs JavaScript enabled.</p></noscript>
 
 <script>
@@ -259,6 +303,7 @@ function defaultConfig(){
       location: { lat:null, lon:null, label:'' },
       theme: 'auto',
       forceDemo: false,
+      kiosk: { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[] },
     },
     collections: [
       { id:'water', name:'Water tanks', icon:'💧', sensors:[
@@ -929,7 +974,7 @@ function sparkline(pts, accent){
    Views
    ===================================================================== */
 const view = document.getElementById('view');
-const TABS = [ ['dashboard','Dashboard'], ['forecast','Forecast vs actual'], ['manage','Manage'], ['settings','Settings'] ];
+const TABS = [ ['dashboard','Dashboard'], ['forecast','Forecast vs actual'], ['manage','Manage'], ['settings','Settings'], ['kiosk','Carousel'] ];
 function currentTab(){
   const h=(location.hash||'#dashboard').slice(1);
   return TABS.some(t=>t[0]===h) ? h : 'dashboard';
@@ -1421,6 +1466,335 @@ function renderSettings(){
   view.append(grid);
 }
 
+/* =====================================================================
+   Carousel / kiosk — a full-screen rotation through the dashboard plots,
+   for a screen that sits open on the dashboard. Slides are rebuilt from
+   live data each paint, so an always-on display stays current.
+   ===================================================================== */
+/* build every available plot as a slide descriptor (mirrors the dashboard
+   + forecast charts). `hasData:false` marks a slide with nothing to draw yet. */
+function buildSlides(){
+  const slides=[];
+  const now=Date.now(), rangeDays=RANGES[state.range].days;
+  for (const coll of config.collections){
+    if (coll.camera && coll.camera.manifestUrl)
+      slides.push({id:`${coll.id}|cam`, group:coll.name, title:(coll.camera.label||'Camera'),
+        sub:'camera', kind:'camera', coll, hasData:true});
+    const rain=coll.sensors.filter(s=>s.kind==='rain');
+    const rest=coll.sensors.filter(s=>s.kind!=='rain');
+    const byUnit=new Map();
+    for (const s of rest){ const k=s.unit||'?'; if(!byUnit.has(k))byUnit.set(k,[]); byUnit.get(k).push(s); }
+    for (const [unit,ss] of byUnit){
+      const series=ss.map(s=>({name:s.name,color:sensorColor(s),
+        points:state.data.bySensor.get(s.id)||[], wash:ss.length===1}));
+      const dec=ss[0].decimals ?? KIND_DEC[ss[0].kind] ?? 1;
+      slides.push({id:`${coll.id}|u|${unit}`, group:coll.name,
+        title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
+        sub:unit, kind:'line', series, unit, dec,
+        includeZero: ss[0].kind==='level'||ss[0].kind==='wind',
+        hasData: series.some(s=>s.points.length)});
+    }
+    for (const s of rain){
+      const pts=state.data.bySensor.get(s.id)||[];
+      const mode=rangeDays<=1?'hour':rangeDays<=31?'day':'week';
+      const cats=bucketTotals(pts,mode,now-rangeDays*864e5,now);
+      const series=[{name:s.name,color:sensorColor(s),values:cats.map(c=>c.value),bar:true}];
+      slides.push({id:`${coll.id}|r|${s.id}`, group:coll.name,
+        title:`${s.name} — ${mode==='hour'?'hourly':mode==='day'?'daily':'weekly'} totals`,
+        sub:s.unit, kind:'bar', cats, series, unit:s.unit, dec:1, todayIdx:cats.length-1,
+        hasData: pts.length>0});
+    }
+  }
+  /* forecast-vs-actual charts (same as the Forecast tab) */
+  const t0=now-3*864e5, t1=now+4*864e5;
+  const cA=cssVar('--s1'), cF=cssVar('--s8');
+  for (const s of allSensors().filter(x=>x.forecastKey)){
+    const fpts=(state.forecast.byKey[s.forecastKey]||[]).filter(p=>p[0]>=t0&&p[0]<=t1);
+    const apts=(state.data.bySensor.get(s.id)||[]).filter(p=>p[0]>=t0);
+    if (!fpts.length && !apts.length) continue;
+    const dec=s.decimals ?? KIND_DEC[s.kind] ?? 1;
+    if (s.kind==='rain'||s.forecastKey==='precipitation'){
+      const catsA=bucketTotals(apts,'day',t0,now), catsF=bucketTotals(fpts,'day',t0,t1);
+      const labels=catsF.length?catsF:catsA;
+      const aVals=labels.map(c=>{ const m=catsA.find(x=>x.t===c.t); return (m&&c.t<=now)?m.value:null; });
+      const fVals=labels.map(c=>{ const m=catsF.find(x=>x.t===c.t); return m?m.value:null; });
+      const series=[{name:'Measured',color:cA,values:aVals,bar:true},
+                    {name:'Forecast',color:cF,values:fVals,bar:true}];
+      const todayIdx=labels.findIndex(c=>c.t<=now&&now<c.t+864e5);
+      slides.push({id:`fc|${s.id}`, group:'Forecast vs actual', title:`${s.name} — daily totals`,
+        sub:s.unit, kind:'bar', cats:labels, series, unit:s.unit, dec:1,
+        todayIdx:todayIdx<0?null:todayIdx, hasData:true});
+    } else {
+      const series=[{name:'Measured',color:cA,points:apts},
+                    {name:'Forecast',color:cF,points:fpts,dash:true}];
+      slides.push({id:`fc|${s.id}`, group:'Forecast vs actual', title:s.name, sub:s.unit,
+        kind:'line', series, unit:s.unit, dec, now, hasData:true});
+    }
+  }
+  return slides;
+}
+function kioskLegend(series){
+  if (!series || series.length<2) return null;
+  return el('div',{class:'k-legend'}, series.map(s=>{
+    const key = svgEl('svg',{width:20,height:8},
+      s.bar ? svgEl('rect',{x:2,y:1,width:14,height:6,rx:2,fill:s.color})
+            : svgEl('line',{x1:0,y1:4,x2:20,y2:4,stroke:s.color,'stroke-width':2.5,
+                'stroke-dasharray':s.dash?'4 3':null}));
+    return el('span',{class:'key'}, key, s.name);
+  }));
+}
+function renderSlideInto(stage, slide){
+  stage.textContent='';
+  const chart=el('div',{class:'k-chart'});
+  stage.append(el('div',{class:'k-slide'},
+    el('div',{class:'k-cap'}, el('span',{class:'grp'}, slide.group),
+      el('h2',{}, slide.title), slide.sub?el('span',{class:'sub'}, slide.sub):null),
+    kioskLegend(slide.series), chart));
+  requestAnimationFrame(()=>{
+    if (!kioskState.on) return;
+    const W=chart.clientWidth||stage.clientWidth||900;
+    const H=chart.clientHeight||Math.round((stage.clientHeight||600)*0.78);
+    chart.textContent='';
+    if (slide.kind==='camera') drawKioskCamera(chart, slide.coll);
+    else if (slide.kind==='bar') drawBarChart(chart,{cats:slide.cats,series:slide.series,
+      unit:slide.unit,dec:slide.dec,todayIdx:slide.todayIdx,height:H});
+    else drawLineChart(chart,{series:slide.series,unit:slide.unit,dec:slide.dec,
+      includeZero:slide.includeZero,now:slide.now,height:H});
+  });
+}
+function drawKioskCamera(chart, coll){
+  const cam=coll.camera, wrap=el('div',{class:'k-cam'});
+  chart.append(wrap);
+  if (!/^https?:\/\//i.test(cam.manifestUrl||'')){
+    wrap.append(demoCameraScene(coll), el('div',{class:'cap'},(cam.label||'Camera')+' — placeholder still'));
+    return;
+  }
+  wrap.append(el('div',{class:'cap'},'Loading image…'));
+  loadImages(coll).then(entries=>{
+    if (!kioskState.on) return;
+    wrap.textContent='';
+    if (!entries.length){ wrap.append(el('div',{class:'cap'},'Manifest loaded, but no images yet.')); return; }
+    const e=entries[entries.length-1];
+    wrap.append(el('img',{src:e.url, alt:cam.label||'camera still'}),
+      el('div',{class:'cap'}, e.t?fmtFull(e.t):''));
+  }).catch(err=>{ if(!kioskState.on) return; wrap.textContent='';
+    wrap.append(el('div',{class:'cap'},'⚠ Images unavailable: '+(err.message||err))); });
+}
+
+/* ---------- kiosk engine ---------- */
+const kioskState = { on:false, idx:0, order:[], paused:false, dwellMs:12000,
+  raf:0, last:0, elapsed:0, hideT:0, dataT:0, clockT:0, wake:null,
+  stage:null, prog:null, barCount:null, barTitle:null, clock:null, playBtn:null };
+
+function kioskVisibleIds(){
+  const hid = config.settings.kiosk.hidden || [];
+  return buildSlides().filter(s=>!hid.includes(s.id) && s.hasData!==false).map(s=>s.id);
+}
+function reconcileOrder(){
+  const vis = kioskVisibleIds(), set = new Set(vis);
+  kioskState.order = kioskState.order.filter(id=>set.has(id));   /* drop gone/empty */
+  const have = new Set(kioskState.order);
+  for (const id of vis) if (!have.has(id)) kioskState.order.push(id); /* append new */
+  if (kioskState.idx >= kioskState.order.length) kioskState.idx = 0;
+}
+function shuffleArr(a){ for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
+
+function openKiosk(){
+  if (kioskState.on) return;
+  const K=config.settings.kiosk, root=document.getElementById('kiosk');
+  root.textContent='';
+  kioskState.dwellMs=Math.max(3,+K.dwellSec||12)*1000;
+  const prog=el('i',{}), stage=el('div',{class:'k-stage'});
+  const barCount=el('span',{class:'k-count'}), barTitle=el('span',{class:'k-title'});
+  const clock=el('span',{class:'k-clock'});
+  const playBtn=el('button',{class:'kbtn',title:'Play / pause (space)',onclick:togglePause},'⏸');
+  root.append(el('div',{class:'k-top'}, prog), stage,
+    el('div',{class:'k-bar'},
+      el('button',{class:'kbtn',title:'Exit (Esc)',onclick:closeKiosk},'✕ Exit'),
+      el('button',{class:'kbtn',title:'Previous (←)',onclick:()=>{prevSlide();}},'⏮'),
+      playBtn,
+      el('button',{class:'kbtn',title:'Next (→)',onclick:()=>{nextSlide();}},'⏭'),
+      barCount, barTitle, el('span',{class:'spacer'}),
+      el('button',{class:'kbtn',title:'Fullscreen (f)',onclick:toggleFullscreen},'⛶'),
+      clock));
+  Object.assign(kioskState,{on:true,idx:0,paused:false,elapsed:0,order:[],
+    stage,prog,barCount,barTitle,clock,playBtn});
+  root.classList.add('on');
+  reconcileOrder();
+  if (K.shuffle) shuffleArr(kioskState.order);
+  paintCurrent();
+  kioskState.last=performance.now();
+  kioskState.raf=requestAnimationFrame(kioskTick);
+  kioskState.dataT=setInterval(async()=>{
+    await refreshData(); await refreshForecast();
+    if (kioskState.on){ reconcileOrder(); paintCurrent(); }
+  }, 5*60000);
+  kioskState.clockT=setInterval(tickClock, 15000); tickClock();
+  document.addEventListener('keydown', kioskKey);
+  addEventListener('resize', kioskResize);
+  root.addEventListener('pointermove', kioskWake);
+  requestWake();
+  if (K.fullscreen) requestFS();
+  kioskWake();
+}
+function closeKiosk(){
+  if (!kioskState.on) return;
+  kioskState.on=false;
+  cancelAnimationFrame(kioskState.raf);
+  clearInterval(kioskState.dataT); clearInterval(kioskState.clockT); clearTimeout(kioskState.hideT);
+  document.removeEventListener('keydown', kioskKey);
+  removeEventListener('resize', kioskResize);
+  const root=document.getElementById('kiosk');
+  root.removeEventListener('pointermove', kioskWake);
+  root.classList.remove('on','idle'); root.textContent='';
+  try{ kioskState.wake && kioskState.wake.release && kioskState.wake.release(); }catch(e){}
+  kioskState.wake=null;
+  try{ if (document.fullscreenElement) document.exitFullscreen(); }catch(e){}
+  if (location.hash==='#kiosk-play') location.hash='#kiosk';
+  render();
+}
+function paintCurrent(){
+  if (!kioskState.on) return;
+  if (!kioskState.order.length){ paintKioskEmpty(); return; }
+  const all=buildSlides();
+  let slide=all.find(s=>s.id===kioskState.order[kioskState.idx]);
+  if (!slide){ reconcileOrder();
+    if (!kioskState.order.length){ paintKioskEmpty(); return; }
+    slide=all.find(s=>s.id===kioskState.order[kioskState.idx]);
+    if (!slide){ paintKioskEmpty(); return; } }
+  renderSlideInto(kioskState.stage, slide);
+  kioskState.barCount.textContent=`${kioskState.idx+1} / ${kioskState.order.length}`;
+  kioskState.barTitle.textContent=slide.group+' · '+slide.title;
+  kioskState.prog.style.width='0%';
+}
+function paintKioskEmpty(){
+  kioskState.stage.textContent='';
+  kioskState.stage.append(el('div',{class:'k-empty'},
+    el('p',{style:'font-size:1.1rem'},'No plots selected for the carousel.'),
+    el('p',{},'Open the ',el('strong',{},'Carousel'),' tab and tick the plots you want on screen.')));
+  if (kioskState.barCount) kioskState.barCount.textContent='0 / 0';
+  if (kioskState.barTitle) kioskState.barTitle.textContent='';
+}
+function nextSlide(){
+  reconcileOrder();
+  if (!kioskState.order.length){ paintKioskEmpty(); return; }
+  kioskState.idx=(kioskState.idx+1)%kioskState.order.length;
+  kioskState.elapsed=0; paintCurrent(); kioskWake();
+}
+function prevSlide(){
+  reconcileOrder();
+  if (!kioskState.order.length){ paintKioskEmpty(); return; }
+  kioskState.idx=(kioskState.idx-1+kioskState.order.length)%kioskState.order.length;
+  kioskState.elapsed=0; paintCurrent(); kioskWake();
+}
+function advanceSlide(){
+  if (kioskState.idx>=kioskState.order.length-1 && !config.settings.kiosk.loop){
+    kioskState.paused=true; updatePlayBtn(); return;
+  }
+  nextSlide();
+}
+function kioskTick(ts){
+  if (!kioskState.on) return;
+  const dt=ts-kioskState.last; kioskState.last=ts;
+  if (!kioskState.paused && kioskState.order.length>1){
+    kioskState.elapsed+=dt;
+    kioskState.prog.style.width=Math.min(100,kioskState.elapsed/kioskState.dwellMs*100)+'%';
+    if (kioskState.elapsed>=kioskState.dwellMs){ kioskState.elapsed=0; advanceSlide(); }
+  } else if (kioskState.order.length<=1){ kioskState.prog.style.width='0%'; }
+  kioskState.raf=requestAnimationFrame(kioskTick);
+}
+function togglePause(){ kioskState.paused=!kioskState.paused; updatePlayBtn(); kioskWake(); }
+function updatePlayBtn(){ if (kioskState.playBtn) kioskState.playBtn.textContent=kioskState.paused?'▶':'⏸'; }
+function kioskKey(e){
+  if (!kioskState.on) return;
+  if (e.key==='Escape'){ e.preventDefault(); closeKiosk(); }
+  else if (e.key===' '){ e.preventDefault(); togglePause(); }
+  else if (e.key==='ArrowRight'){ e.preventDefault(); nextSlide(); }
+  else if (e.key==='ArrowLeft'){ e.preventDefault(); prevSlide(); }
+  else if (e.key==='f'||e.key==='F'){ e.preventDefault(); toggleFullscreen(); }
+}
+function kioskWake(){
+  const root=document.getElementById('kiosk');
+  root.classList.remove('idle');
+  clearTimeout(kioskState.hideT);
+  kioskState.hideT=setTimeout(()=>{ if (kioskState.on) root.classList.add('idle'); }, 3500);
+}
+const kioskResize=debounce(()=>{ if (kioskState.on) paintCurrent(); }, 160);
+function tickClock(){ if (kioskState.clock) kioskState.clock.textContent=fmtTime(Date.now()); }
+async function requestWake(){
+  try{ if ('wakeLock' in navigator) kioskState.wake=await navigator.wakeLock.request('screen'); }catch(e){}
+}
+document.addEventListener('visibilitychange', ()=>{
+  if (kioskState.on && document.visibilityState==='visible' && !kioskState.wake) requestWake();
+});
+function requestFS(){ try{ const p=document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); if (p&&p.catch) p.catch(()=>{}); }catch(e){} }
+function toggleFullscreen(){
+  try{
+    if (document.fullscreenElement){ document.exitFullscreen(); }
+    else { const p=document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); if (p&&p.catch) p.catch(()=>{}); }
+  }catch(e){}
+  kioskWake();
+}
+
+/* ---------- carousel config view ---------- */
+function renderKiosk(){
+  view.textContent=''; liveCards.length=0;
+  const K=config.settings.kiosk;
+  view.append(el('div',{class:'filters'},
+    el('button',{class:'btn primary',onclick:openKiosk},'▷ Start carousel'),
+    el('div',{class:'spacer'}),
+    el('span',{class:'meta'},'A full-screen rotation of your plots for an always-on screen. Esc exits · Space pauses · ← → to step.')));
+
+  const dwell=el('input',{type:'number',min:3,max:600,step:1,value:K.dwellSec});
+  const loop=el('input',{type:'checkbox'}); loop.checked=!!K.loop;
+  const shuffle=el('input',{type:'checkbox'}); shuffle.checked=!!K.shuffle;
+  const fs=el('input',{type:'checkbox'}); fs.checked=!!K.fullscreen;
+  const auto=el('input',{type:'checkbox'}); auto.checked=!!K.autostart;
+  const persist=()=>{ K.dwellSec=clamp(parseInt(dwell.value,10)||12,3,600);
+    K.loop=loop.checked; K.shuffle=shuffle.checked; K.fullscreen=fs.checked; K.autostart=auto.checked; saveConfig(); };
+  [dwell,loop,shuffle,fs,auto].forEach(i=>i.addEventListener('change',persist));
+
+  const slides=buildSlides();
+  const hidden=new Set(K.hidden||[]);
+  const shownCount=slides.filter(s=>!hidden.has(s.id)&&s.hasData!==false).length;
+
+  const optCard=el('section',{class:'card'},
+    el('h3',{},'Carousel options'),
+    el('label',{},'Seconds per plot'), dwell,
+    el('label',{class:'chkline'}, loop, el('span',{},'Loop back to the first plot')),
+    el('label',{class:'chkline'}, shuffle, el('span',{},'Shuffle order each time it starts')),
+    el('label',{class:'chkline'}, fs, el('span',{},'Go fullscreen on start')),
+    el('label',{class:'chkline'}, auto, el('span',{},'Auto-start when this page loads')),
+    el('p',{class:'help'},'Auto-start turns a spare screen into a wall display — it opens straight into the carousel. Or bookmark ',
+      el('code',{},'#kiosk-play'),' to force it on any device.'));
+
+  const listCard=el('section',{class:'card'});
+  listCard.append(el('div',{class:'card-head'},
+    el('h3',{},'Plots to include'),
+    el('span',{class:'card-sub'}, `${shownCount} of ${slides.length} on screen`),
+    el('div',{class:'spacer'}),
+    el('button',{class:'ghost',onclick:()=>{ K.hidden=[]; saveConfig(); render(); }},'Select all'),
+    el('button',{class:'ghost',onclick:()=>{ K.hidden=buildSlides().map(s=>s.id); saveConfig(); render(); }},'Select none')));
+  if (!slides.length)
+    listCard.append(el('p',{class:'help'},'No plots yet — add sensors in ',el('a',{href:'#manage'},'Manage'),' and they will appear here once data loads.'));
+  let curGroup=null;
+  for (const s of slides){
+    if (s.group!==curGroup){ curGroup=s.group; listCard.append(el('div',{class:'subhead'},curGroup)); }
+    const cb=el('input',{type:'checkbox'}); cb.checked=!hidden.has(s.id);
+    cb.addEventListener('change',()=>{
+      const h=new Set(config.settings.kiosk.hidden||[]);
+      if (cb.checked) h.delete(s.id); else h.add(s.id);
+      config.settings.kiosk.hidden=[...h]; saveConfig();
+      const c=buildSlides().filter(x=>!h.has(x.id)&&x.hasData!==false).length;
+      sub.textContent=`${c} of ${slides.length} on screen`;
+    });
+    listCard.append(el('label',{class:'krow'}, cb, el('span',{class:'nm'},s.title),
+      el('span',{class:'mi'}, s.hasData===false?'no data yet':s.sub)));
+  }
+  const sub=listCard.querySelector('.card-sub');
+  view.append(el('div',{class:'set-grid'}, optCard, listCard));
+}
+
 /* ---------- theme ---------- */
 function applyTheme(){
   const t=config.settings.theme||'auto';
@@ -1433,6 +1807,7 @@ document.getElementById('theme-btn').addEventListener('click',()=>{
   saveConfig(); applyTheme(); render();
 });
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{ applyTheme(); render(); });
+document.getElementById('kiosk-btn').addEventListener('click', openKiosk);
 
 /* ---------- router & boot ---------- */
 function render(){
@@ -1442,17 +1817,23 @@ function render(){
   if (tab==='dashboard') renderDashboard();
   else if (tab==='forecast') renderForecastView();
   else if (tab==='manage') renderManage();
+  else if (tab==='kiosk') renderKiosk();
   else renderSettings();
 }
 addEventListener('hashchange',render);
 (async function boot(){
   config=loadConfig();
+  /* backfill kiosk settings for configs saved before the carousel existed */
+  config.settings.kiosk = Object.assign(
+    { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[] },
+    config.settings.kiosk||{});
   applyTheme();
   renderTabs();
   view.append(el('div',{class:'card'},el('p',{class:'note'},'Loading…')));
   await refreshData();
   await refreshForecast();
   render();
+  if (config.settings.kiosk.autostart || location.hash==='#kiosk-play') openKiosk();
   setInterval(async()=>{ await refreshData(); if (currentTab()==='dashboard') render(); }, 5*60000);
   setInterval(async()=>{ await refreshForecast(); if (currentTab()==='forecast') render(); }, 30*60000);
 })();
