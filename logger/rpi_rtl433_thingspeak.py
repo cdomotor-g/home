@@ -46,14 +46,14 @@ import urllib.request
 
 # ----------------------------------------------------------------- settings
 WRITE_API_KEY = "YOUR_THINGSPEAK_WRITE_KEY"   # this LPU's own channel
-UPLOAD_INTERVAL_MIN = 5                        # ~105k msgs/yr at 5 min: well inside free tier
-FREQUENCY = "433.92M"
+UPLOAD_INTERVAL_MIN = 15                        # ~105k msgs/yr at 5 min: well inside free tier
+FREQUENCY = "917M"
 
 # rtl_433 decodes dozens of protocols at once; filter to your station so a
 # neighbour's sensor can't pollute the channel. Run `rtl_433 -F json` and copy
 # the "model" value it prints for your station (and "id" after a battery swap
 # re-pair, if you want to pin it). Empty filter = accept everything.
-MODEL_FILTER = ""          # e.g. "Fineoffset-WHx080"
+MODEL_FILTER = "Bresser-6in1"          # e.g. "Fineoffset-WHx080"
 ID_FILTER = None           # e.g. 42 — or None to accept any id
 
 RTL433_CMD = ["rtl_433", "-f", FREQUENCY, "-F", "json", "-M", "time:unix"]
