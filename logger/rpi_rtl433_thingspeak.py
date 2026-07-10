@@ -45,8 +45,8 @@ import urllib.parse
 import urllib.request
 
 # ----------------------------------------------------------------- settings
-WRITE_API_KEY = "YOUR_THINGSPEAK_WRITE_KEY"   # this LPU's own channel
-UPLOAD_INTERVAL_MIN = 15                        # ~105k msgs/yr at 5 min: well inside free tier
+WRITE_API_KEY = "VG88DX08VU00PM7B"   # this LPU's own channel
+UPLOAD_INTERVAL_MIN = 10                        # ~105k msgs/yr at 5 min: well inside free tier
 FREQUENCY = "917M"
 
 # rtl_433 decodes dozens of protocols at once; filter to your station so a
