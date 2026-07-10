@@ -218,6 +218,15 @@ channel override.
 - **Camera cards** — collections with a camera manifest URL show the latest
   still, its timestamp, and a thumbnail strip of recent frames (placeholder
   scene until the camera LPU is publishing).
+- **Carousel (kiosk mode)** — turn a spare screen into a wall display: a
+  full-screen rotation that rolls through the plots one at a time. The
+  **Carousel** tab lets you tick exactly which plots to show, set seconds per
+  plot, loop/shuffle, and go fullscreen. Data refreshes while it runs, and it
+  requests a screen wake-lock so the display never sleeps. Controls (Exit,
+  prev/pause/next, fullscreen, clock) auto-hide; keyboard is `Esc` exit,
+  `Space` pause, `←`/`→` to step, `f` fullscreen. Enable **auto-start**, or
+  open [`index.html#kiosk-play`](index.html#kiosk-play), to boot straight into
+  the carousel — ideal for a dedicated always-on monitor.
 - **Manage (CRUD)** — collections for areas/systems around the place (water,
   weather, mushroom house, hydroponics…), each holding **sensors** (name, unit,
   type, ThingSpeak field, alert range, forecast mapping, optional per-sensor
