@@ -1125,9 +1125,10 @@ function renderDashboard(){
     if (coll.camera && coll.camera.manifestUrl) grid.append(cameraCard(coll));
     const rain=coll.sensors.filter(s=>s.kind==='rain');
     const rest=coll.sensors.filter(s=>s.kind!=='rain');
-    const byUnit=new Map();
-    for (const s of rest){ const k=s.unit||'?'; if(!byUnit.has(k))byUnit.set(k,[]); byUnit.get(k).push(s); }
-    for (const [unit,ss] of byUnit){
+    const byGroup=new Map();
+    for (const s of rest){ const k = s.kind==='level' ? `s:${s.id}` : (s.unit||'?'); if(!byGroup.has(k))byGroup.set(k,[]); byGroup.get(k).push(s); }
+    for (const [,ss] of byGroup){
+      const unit=ss[0].unit;
       const series=ss.map(s=>({name:s.name,color:sensorColor(s),
         points:state.data.bySensor.get(s.id)||[], wash:ss.length===1}));
       if (!series.some(s=>s.points.length) && ss.every(s=>!state.data.bySensor.get(s.id))) continue;
@@ -1135,7 +1136,7 @@ function renderDashboard(){
       grid.append(chartCard({
         title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
         sub: unit, series,
-        renderChart: b=>drawLineChart(b,{series,unit,dec,includeZero:ss[0].kind==='level'||ss[0].kind==='wind'}),
+        renderChart: b=>drawLineChart(b,{series,unit,dec,includeZero:ss[0].kind==='wind'}),
         renderTable: ()=>seriesTable(series,unit,dec),
       }));
     }
@@ -1557,16 +1558,17 @@ function buildSlides(){
         sub:'camera', kind:'camera', coll, hasData:true});
     const rain=coll.sensors.filter(s=>s.kind==='rain');
     const rest=coll.sensors.filter(s=>s.kind!=='rain');
-    const byUnit=new Map();
-    for (const s of rest){ const k=s.unit||'?'; if(!byUnit.has(k))byUnit.set(k,[]); byUnit.get(k).push(s); }
-    for (const [unit,ss] of byUnit){
+    const byGroup=new Map();
+    for (const s of rest){ const k = s.kind==='level' ? `s:${s.id}` : (s.unit||'?'); if(!byGroup.has(k))byGroup.set(k,[]); byGroup.get(k).push(s); }
+    for (const [gkey,ss] of byGroup){
+      const unit=ss[0].unit;
       const series=ss.map(s=>({name:s.name,color:sensorColor(s),
         points:state.data.bySensor.get(s.id)||[], wash:ss.length===1}));
       const dec=nz(ss[0].decimals, nz(KIND_DEC[ss[0].kind], 1));
-      slides.push({id:`${coll.id}|u|${unit}`, group:coll.name,
+      slides.push({id:`${coll.id}|u|${gkey}`, group:coll.name,
         title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
         sub:unit, kind:'line', series, unit, dec,
-        includeZero: ss[0].kind==='level'||ss[0].kind==='wind',
+        includeZero: ss[0].kind==='wind',
         hasData: series.some(s=>s.points.length)});
     }
     for (const s of rain){
