@@ -206,6 +206,17 @@ channel override.
 
 - **Stat tiles** — latest reading per sensor with 24 h delta, a sparkline, and
   low/high alert thresholds (battery warns below 11.5 V out of the box).
+- **Days till empty** — any collection with tank (level-type) sensors gets a
+  projection card that extrapolates from *recent net usage* to estimate when
+  the combined tanks run dry. Usage is measured only from drawdown over a
+  user-configurable trailing window (72 h by default, editable right on the
+  card); rises from rain or a refill are ignored rather than netted off, so a
+  storm mid-window can't mask real usage on either side of it. Today it
+  assumes every tank in the collection shares one diameter (the assumption
+  cancels out of the day-count math, so it's exact even though the true
+  diameter is unknown); set a real diameter per tank in Manage → edit sensor
+  once you know it, and the card switches to true per-tank volumes — mixed
+  known/unknown tanks fall back to the average of the known ones.
 - **Charts** — time-series per collection (sensors sharing a unit share an
   axis; nothing ever gets a second y-axis), rain as hourly/daily/weekly total
   bars, with crosshair tooltips, a table view on every chart, and

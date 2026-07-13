@@ -118,6 +118,10 @@ nav.tabs a.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600
 .tile .delta.day{color:var(--muted)}
 .tile .status{font-size:.75rem;font-weight:600;margin-top:1px}
 .tile svg{display:block;margin-top:6px}
+/* ---------- tank projection card ---------- */
+.proj-days{font-size:1.9rem;font-weight:700;margin:6px 0 4px}
+.proj-days .unit{font-size:.8rem;font-weight:400;color:var(--muted);margin-left:4px}
+.winhrs{width:90px}
 /* ---------- charts ---------- */
 .chart-body{position:relative}
 .chart-body svg{display:block;width:100%;height:auto}
@@ -325,11 +329,16 @@ function defaultConfig(){
       theme: 'auto',
       forceDemo: false,
       kiosk: { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[] },
+      /* "days till empty" projection for tank (kind:'level') sensors — the window is
+         user-configurable from the projection card. diameterM lives per-sensor (below)
+         so the calculation can move from "assume equal" to real per-tank volumes
+         later without any code changes — see tankArea(). */
+      tankProjection: { windowHours: 72 },
     },
     collections: [
       { id:'water', name:'Water tanks', icon:'💧', sensors:[
-          { id:'tank1', name:'Tank 1', unit:'m', kind:'level', field:1, slot:1, decimals:2, min:0.3, max:null, forecastKey:'' },
-          { id:'tank2', name:'Tank 2', unit:'m', kind:'level', field:2, slot:2, decimals:2, min:0.3, max:null, forecastKey:'' },
+          { id:'tank1', name:'Tank 1', unit:'m', kind:'level', field:1, slot:1, decimals:2, min:0.3, max:null, forecastKey:'', diameterM:null },
+          { id:'tank2', name:'Tank 2', unit:'m', kind:'level', field:2, slot:2, decimals:2, min:0.3, max:null, forecastKey:'', diameterM:null },
         ], controls:[] },
       { id:'weather', name:'Weather station', icon:'🌦️', sensors:[
           { id:'rain', name:'Rain gauge', unit:'mm', kind:'rain', field:3, slot:1, decimals:1, min:null, max:null, forecastKey:'precipitation' },
@@ -412,6 +421,7 @@ let state = {
   range: (()=>{ try { return localStorage.getItem('homedash.range') || '7d'; } catch(e){ return '7d'; } })(),
   data: { bySensor:new Map(), fetchedAt:null, source:null, error:null },
   forecast: { byKey:{}, fetchedAt:null, error:null },
+  tankProj: { bySensor:new Map(), fetchedAt:null, error:null },
   loading: false,
 };
 const demoMode = () => config.settings.forceDemo || !config.settings.thingspeak.channelId;
@@ -544,6 +554,66 @@ async function refreshData(){
   renderSrcBadge();
 }
 function markStale(on){ document.getElementById('view').classList.toggle('stale', on); }
+
+/* ---------- tank-projection layer: ThingSpeak ----------
+   Independent of the dashboard range filter — the "days till empty" card looks
+   back a fixed, user-configurable window (default 72 h) regardless of whether
+   the charts above are showing 24 h or 90 d, so it gets its own fetch. */
+function tankLevelSensors(){
+  return allSensors().filter(s => s.kind==='level' && s.field);
+}
+async function refreshTankProjection(){
+  const sensors = tankLevelSensors();
+  const bySensor = new Map();
+  if (!sensors.length){ state.tankProj = { bySensor, fetchedAt:Date.now(), error:null }; return; }
+  const hours = tankProjectionWindowHours();
+  const days = Math.ceil(hours/24) + 1; /* small buffer so the exact window is fully covered before trimming */
+  const cutoff = Date.now() - hours*36e5;
+  let error = null;
+  try {
+    if (demoMode()){
+      const rows = genDemoRows(days, 0);
+      for (const s of sensors){
+        const idx = nz(DEMO_LPU_OFFSET[s.channelId||''], 0) + s.field - 1;
+        const pts = [];
+        for (const r of rows){ if (r.t < cutoff) continue; const v = r.f[idx]; if (v!=null) pts.push([r.t, +v.toFixed(3)]); }
+        bySensor.set(s.id, pts);
+      }
+    } else {
+      const ts = config.settings.thingspeak;
+      const groups = new Map();
+      for (const s of sensors){
+        const ch = (s.channelId || ts.channelId), key = (s.channelId ? (s.readKey||'') : (ts.readKey||''));
+        if (!ch || !/^\d+$/.test(String(ch))) continue;
+        const gk = ch + '|' + key;
+        if (!groups.has(gk)) groups.set(gk, { ch, key, sensors:[] });
+        groups.get(gk).sensors.push(s);
+      }
+      const errs = [];
+      for (const g of groups.values()){
+        try {
+          let url = `https://api.thingspeak.com/channels/${encodeURIComponent(g.ch)}/feeds.json?days=${days}`;
+          if (g.key) url += `&api_key=${encodeURIComponent(g.key)}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`ThingSpeak HTTP ${res.status} (channel ${g.ch})`);
+          const json = await res.json();
+          if (json === -1 || !json.feeds) throw new Error(`Channel ${g.ch}: not found or read key required`);
+          for (const s of g.sensors){
+            const pts = [];
+            for (const row of json.feeds){
+              const t = Date.parse(row.created_at);
+              const v = parseFloat(row['field'+s.field]);
+              if (isFinite(t) && isFinite(v) && t>=cutoff) pts.push([t, v]);
+            }
+            bySensor.set(s.id, pts);
+          }
+        } catch(e){ errs.push(e.message || String(e)); }
+      }
+      if (errs.length) error = errs.join(' · ');
+    }
+  } catch(e){ error = e.message || String(e); }
+  state.tankProj = { bySensor, fetchedAt: Date.now(), error };
+}
 
 /* ---------- forecast layer: Open-Meteo ---------- */
 function forecastKeysInUse(){
@@ -719,6 +789,73 @@ function medianStep(pts){
   if (!pts || pts.length<2) return 36e5;
   const ds=[]; for(let i=1;i<Math.min(pts.length,50);i++) ds.push(pts[i][0]-pts[i-1][0]);
   ds.sort((a,b)=>a-b); return ds[ds.length>>1];
+}
+
+/* ---------- tank projection math ----------
+   "Days till empty" for a collection's tank (kind:'level') sensors, extrapolating
+   from recent net drawdown. Volume needs a cross-section area per tank; today we
+   only know the level (height), not the diameter, so every tank is assumed to
+   share one diameter (tankDiameterFor's fallback) and area cancels out of the
+   days-till-empty ratio — the result is identical however wide that assumed
+   diameter really is. Once a tank's real diameterM is entered (Manage → edit
+   sensor), it's used in place of the shared assumption, and mixed known/unknown
+   tanks fall back to the average of the known ones — no other code changes. */
+function tankProjectionWindowHours(){
+  const tp = config.settings.tankProjection || {};
+  return clamp(Math.round(nz(tp.windowHours, 72)), 1, 24*30);
+}
+function tankDiameterFor(coll, s){
+  if (s.diameterM!=null && s.diameterM>0) return s.diameterM;
+  const known = coll.sensors
+    .filter(x=>x.kind==='level' && x.diameterM!=null && x.diameterM>0)
+    .map(x=>x.diameterM);
+  return known.length ? known.reduce((a,b)=>a+b,0)/known.length : null;
+}
+function tankArea(coll, s){
+  const d = tankDiameterFor(coll, s);
+  return d!=null ? Math.PI/4*d*d : 1; /* neutral, uniform "unit area" while no diameter is known anywhere */
+}
+/* one combined volume series for a collection's tanks, sampled on the timestamps
+   of whichever tank has the most points; other tanks are matched by nearest time
+   within tolerance so a reading missing from one tank drops that instant rather
+   than understating the total */
+function combinedTankSeries(coll, bySensor){
+  const levels = coll.sensors.filter(s=>s.kind==='level');
+  if (!levels.length) return [];
+  let primary=levels[0], maxLen=-1;
+  for (const s of levels){ const p=bySensor.get(s.id)||[]; if (p.length>maxLen){ maxLen=p.length; primary=s; } }
+  const primaryPts = bySensor.get(primary.id)||[];
+  if (!primaryPts.length) return [];
+  const tol = Math.max(2*medianStep(primaryPts), 15*60000);
+  const out=[];
+  for (const [t] of primaryPts){
+    let vol=0, ok=true;
+    for (const s of levels){
+      const v = valueAt(bySensor.get(s.id)||[], t, tol);
+      if (v==null){ ok=false; break; }
+      vol += tankArea(coll, s) * v;
+    }
+    if (ok) out.push([t, vol]);
+  }
+  return out;
+}
+/* usage-only drawdown rate: positive deltas (rain / refills) are skipped entirely
+   rather than netted off, so a storm mid-window can't mask real usage either
+   side of it — only the negative (draining) steps accumulate */
+function tankUsageProjection(coll, bySensor){
+  const series = combinedTankSeries(coll, bySensor);
+  if (series.length < 2) return null;
+  let drawdown = 0;
+  for (let i=1;i<series.length;i++){
+    const d = series[i][1] - series[i-1][1];
+    if (d < 0) drawdown += -d;
+  }
+  const elapsedHrs = (series[series.length-1][0] - series[0][0]) / 36e5;
+  if (elapsedHrs <= 0) return null;
+  const ratePerHour = drawdown / elapsedHrs;
+  const current = series[series.length-1][1];
+  const daysLeft = ratePerHour > 0 ? current / (ratePerHour*24) : Infinity;
+  return { current, ratePerDay: ratePerHour*24, daysLeft, elapsedHrs, updatedAt: series[series.length-1][0] };
 }
 
 /* ---------- tooltip singleton ---------- */
@@ -1049,6 +1186,54 @@ function collIcon(coll){
                       : el('span',{class:'ico'}, coll.icon||'📦');
 }
 
+/* ---------- tank projection card ---------- */
+function tankProjectionCard(coll){
+  const proj = tankUsageProjection(coll, state.tankProj.bySensor);
+  const hasDiameters = coll.sensors.some(s=>s.kind==='level' && s.diameterM!=null && s.diameterM>0);
+  const body = el('div',{});
+  const hoursInput = el('input',{class:'winhrs',type:'number',min:1,max:24*30,step:1,
+    value:tankProjectionWindowHours()});
+  hoursInput.addEventListener('change', async ()=>{
+    config.settings.tankProjection.windowHours = clamp(parseInt(hoursInput.value,10)||72, 1, 24*30);
+    saveConfig();
+    hoursInput.disabled = true;
+    await refreshTankProjection();
+    render();
+  });
+  const card = el('section',{class:'card'},
+    el('div',{class:'card-head'}, el('h3',{},'💧 Days till empty'),
+      el('span',{class:'card-sub'},'usage-based projection')),
+    body,
+    el('label',{},'Projection window (hours)'), hoursInput,
+    el('p',{class:'help'},'Net usage over this window — rises (rain, refills) are ignored, only drawdown counts.'));
+  if (state.tankProj.error){
+    body.append(el('div',{class:'empty'},'⚠ '+state.tankProj.error));
+    return card;
+  }
+  if (!proj){
+    body.append(el('div',{class:'empty'},'Not enough recent data yet to project usage.'));
+    return card;
+  }
+  const levelUnit = (coll.sensors.find(s=>s.kind==='level')||{}).unit || 'm';
+  const unit = hasDiameters ? 'L' : levelUnit;
+  const scale = hasDiameters ? 1000 : 1; /* m³ (area in m² × height in m) → L */
+  const dec = hasDiameters ? 0 : 2;
+  const days = proj.daysLeft;
+  const color = !isFinite(days) ? cssVar('--good-text') : days<7 ? cssVar('--crit') : days<30 ? cssVar('--warn') : cssVar('--good-text');
+  const rows = [
+    el('div',{class:'proj-days',style:`color:${color}`},
+      isFinite(days) ? fmtVal(Math.min(days,999),1) : '—',
+      el('span',{class:'unit'}, isFinite(days) ? ' days' : ' steady — no net usage in this window')),
+    el('div',{class:'delta'}, `${hasDiameters?'volume':'combined level'} now: ${fmtVal(proj.current*scale,dec)} ${unit} (both tanks)`),
+    el('div',{class:'delta'}, `usage: ${fmtVal(proj.ratePerDay*scale,dec)} ${unit}/day`),
+  ];
+  if (!hasDiameters) rows.push(el('p',{class:'help'},
+    'Assumes every tank in this collection shares one diameter. Set each tank’s real diameter in ',
+    el('a',{href:'#manage'},'Manage'),' (edit sensor) once known, for a volume-based estimate.'));
+  body.append(...rows);
+  return card;
+}
+
 /* ---------- dashboard ---------- */
 function renderDashboard(){
   view.textContent=''; liveCards.length=0;
@@ -1062,7 +1247,7 @@ function renderDashboard(){
     state.data.fetchedAt ? `updated ${fmtTime(state.data.fetchedAt)}` : 'loading…',
     state.data.source==='thingspeak' ? ' · ThingSpeak' : '');
   view.append(el('div',{class:'filters'}, seg,
-    el('button',{class:'btn',onclick:async()=>{ await refreshData(); render(); }},'↻ Refresh'),
+    el('button',{class:'btn',onclick:async()=>{ await refreshData(); await refreshTankProjection(); render(); }},'↻ Refresh'),
     el('div',{class:'spacer'}), meta));
   if (state.data.error)
     view.append(el('div',{class:'card'}, el('p',{class:'note'},'⚠ ', state.data.error,
@@ -1123,6 +1308,7 @@ function renderDashboard(){
     const grid=el('div',{class:'grid'});
     /* camera stills first, when the collection has one */
     if (coll.camera && coll.camera.manifestUrl) grid.append(cameraCard(coll));
+    if (coll.sensors.some(s=>s.kind==='level')) grid.append(tankProjectionCard(coll));
     const rain=coll.sensors.filter(s=>s.kind==='rain');
     const rest=coll.sensors.filter(s=>s.kind!=='rain');
     const byGroup=new Map();
@@ -1264,6 +1450,7 @@ function renderManage(){
         el('span',{class:'dot',style:`background:${sensorColor(s)};width:9px;height:9px;border-radius:50%;display:inline-block`}),
         el('span',{class:'nm'},s.name),
         el('span',{class:'mi'},`${s.unit} · ${s.kind} · field ${s.field}${s.channelId?` @ch ${s.channelId}`:''}`),
+        (s.kind==='level'&&s.diameterM!=null)?el('span',{class:'mi'},`⌀ ${s.diameterM} m`):null,
         fc&&fc.v?el('span',{class:'mi'},`↔ ${fc.l}`):null,
         el('div',{class:'spacer'}),
         el('button',{class:'ghost',onclick:()=>sensorForm(coll,s)},'Edit'),
@@ -1321,7 +1508,7 @@ function openForm(title, fields, values, onSave){
     if (onSave(out)!==false){
       closeModal(); saveConfig(); render();
       /* pick up data for newly added/re-mapped sensors right away */
-      refreshData().then(()=>refreshForecast()).then(render);
+      refreshData().then(()=>refreshForecast()).then(()=>refreshTankProjection()).then(render);
     }
   }});
   form.append(el('h3',{},title));
@@ -1416,6 +1603,8 @@ function sensorForm(coll,s){
     {key:'decimals',label:'Decimal places',type:'number',min:0,max:4,step:1},
     {key:'min',label:'Alert below (optional)',type:'number',step:'any',help:'Tile shows a warning under this value.'},
     {key:'max',label:'Alert above (optional)',type:'number',step:'any'},
+    {key:'diameterM',label:'Tank diameter in metres (optional — level sensors only)',type:'number',step:'any',min:0,
+      help:'Used by the “days till empty” card to turn level into volume. Leave blank while tanks are assumed to share one diameter; once set per-tank, that card switches to real per-tank volumes automatically.'},
     {key:'forecastKey',label:'Forecast variable (Open-Meteo)',type:'select',options:FC_KEYS,
       help:'Map this to plot forecast vs actual on one chart.'},
     {key:'channelId',label:'Channel override (optional)',placeholder:'Leave blank to use the default channel',
@@ -1473,7 +1662,7 @@ function renderSettings(){
         ts.channelId=chId.value.trim(); ts.readKey=chKey.value.trim();
         ts.uploadIntervalMin=Math.max(1,parseInt(chInt.value,10)||5);
         config.settings.forceDemo=chDemo.checked;
-        saveConfig(); await refreshData(); await refreshForecast(); render();
+        saveConfig(); await refreshData(); await refreshForecast(); await refreshTankProjection(); render();
       }},'Save & reload data'))));
   /* location */
   const lat=el('input',{type:'number',step:'any',value:nz(loc.lat,''),placeholder:'-27.47'});
@@ -1503,7 +1692,7 @@ function renderSettings(){
       try {
         const c=JSON.parse(txt);
         if (!c||!Array.isArray(c.collections)) throw new Error('not a dashboard config');
-        adoptConfig(c,'import'); refreshData().then(()=>{ refreshForecast().then(render); });
+        adoptConfig(c,'import'); refreshData().then(()=>{ refreshForecast().then(()=>refreshTankProjection().then(render)); });
         alert('Config imported.');
       } catch(e){ alert('Import failed: '+e.message); }
     });
@@ -1530,13 +1719,13 @@ function renderSettings(){
           const c=await res.json();
           if (!c||!Array.isArray(c.collections)) throw new Error('not a dashboard config');
           adoptConfig(c,'repo');
-          await refreshData(); await refreshForecast(); render();
+          await refreshData(); await refreshForecast(); await refreshTankProjection(); render();
         } catch(e){ alert('Reload failed: '+(e.message||e)); }
       }},'↻ Reload repo config'),
       el('button',{class:'btn danger',onclick:()=>{
         if (confirm('Discard the config currently loaded in this browser and switch to the built-in demo data?')){
           adoptConfig(defaultConfig(),'demo');
-          refreshData().then(()=>{ refreshForecast().then(render); });
+          refreshData().then(()=>{ refreshForecast().then(()=>refreshTankProjection().then(render)); });
         }}},'Revert to demo data')),
     el('label',{},'Import a different config'), fileIn));
   view.append(grid);
@@ -1906,14 +2095,18 @@ addEventListener('hashchange',render);
     config.settings.kiosk = Object.assign(
       { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[] },
       config.settings.kiosk||{});
+    /* backfill the tank "days till empty" window for configs saved before it existed */
+    config.settings.tankProjection = Object.assign(
+      { windowHours:72 }, config.settings.tankProjection||{});
     applyTheme();
     renderTabs();
     view.append(el('div',{class:'card'},el('p',{class:'note'},'Loading…')));
     await refreshData();
     await refreshForecast();
+    await refreshTankProjection();
     render();
     if (config.settings.kiosk.autostart || location.hash==='#kiosk-play') openKiosk();
-    setInterval(async()=>{ await refreshData(); if (currentTab()==='dashboard') render(); }, 5*60000);
+    setInterval(async()=>{ await refreshData(); await refreshTankProjection(); if (currentTab()==='dashboard') render(); }, 5*60000);
     setInterval(async()=>{ await refreshForecast(); if (currentTab()==='forecast') render(); }, 30*60000);
   } catch(err){
     view.textContent = '';

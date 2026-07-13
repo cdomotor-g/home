@@ -20,6 +20,9 @@
       "fullscreen": true,
       "autostart": false,
       "hidden": []
+    },
+    "tankProjection": {
+      "windowHours": 72
     }
   },
   "collections": [
@@ -38,7 +41,8 @@
           "decimals": 2,
           "min": 0.3,
           "max": null,
-          "forecastKey": ""
+          "forecastKey": "",
+          "diameterM": null
         },
         {
           "id": "tank2",
@@ -50,7 +54,8 @@
           "decimals": 2,
           "min": 0.3,
           "max": null,
-          "forecastKey": ""
+          "forecastKey": "",
+          "diameterM": null
         }
       ],
       "controls": []
