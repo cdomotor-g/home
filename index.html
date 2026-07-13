@@ -119,8 +119,9 @@ nav.tabs a.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600
 .tile .status{font-size:.75rem;font-weight:600;margin-top:1px}
 .tile svg{display:block;margin-top:6px}
 /* ---------- tank projection card ---------- */
-.proj-days{font-size:1.9rem;font-weight:700;margin:6px 0 4px}
+.proj-days{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:1.9rem;font-weight:700;margin:6px 0 4px}
 .proj-days .unit{font-size:.8rem;font-weight:400;color:var(--muted);margin-left:4px}
+.proj-days .proj-date{font-size:.9rem;font-weight:600;color:var(--muted);white-space:nowrap}
 .winhrs{width:90px}
 /* ---------- charts ---------- */
 .chart-body{position:relative}
@@ -293,6 +294,9 @@ function fmtVal(v, dec){
 const fmtTime = t => new Date(t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
 const fmtDay  = t => new Date(t).toLocaleDateString([],{day:'numeric',month:'short'});
 const fmtFull = t => new Date(t).toLocaleString([],{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+/* "Thu 30/07/26" — weekday + day-first DD/MM/YY, for the days-till-empty card */
+const fmtProjDate = t => { const d=new Date(t), p2=n=>String(n).padStart(2,'0');
+  return `${d.toLocaleDateString([],{weekday:'short'})} ${p2(d.getDate())}/${p2(d.getMonth()+1)}/${String(d.getFullYear()).slice(-2)}`; };
 
 /* ---------- config store ---------- */
 const CFG_KEY = 'homedash.config.v1';
@@ -1222,8 +1226,10 @@ function tankProjectionCard(coll){
   const color = !isFinite(days) ? cssVar('--good-text') : days<7 ? cssVar('--crit') : days<30 ? cssVar('--warn') : cssVar('--good-text');
   const rows = [
     el('div',{class:'proj-days',style:`color:${color}`},
-      isFinite(days) ? fmtVal(Math.min(days,999),1) : '—',
-      el('span',{class:'unit'}, isFinite(days) ? ' days' : ' steady — no net usage in this window')),
+      el('span',{class:'proj-num'},
+        isFinite(days) ? fmtVal(Math.min(days,999),1) : '—',
+        el('span',{class:'unit'}, isFinite(days) ? ' days' : ' steady — no net usage in this window')),
+      isFinite(days) ? el('span',{class:'proj-date'}, fmtProjDate(proj.updatedAt + days*864e5)) : null),
     el('div',{class:'delta'}, `${hasDiameters?'volume':'combined level'} now: ${fmtVal(proj.current*scale,dec)} ${unit} (both tanks)`),
     el('div',{class:'delta'}, `usage: ${fmtVal(proj.ratePerDay*scale,dec)} ${unit}/day`),
   ];
