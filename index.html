@@ -113,6 +113,7 @@ nav.tabs a.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600
 .tile .lbl{font-size:.75rem;color:var(--ink2)}
 .tile .val{font-size:1.45rem;font-weight:600;margin:2px 0 0}
 .tile .val .unit{font-size:.8rem;font-weight:400;color:var(--muted);margin-left:3px}
+.tile .minmax{font-size:.72rem;color:var(--muted);margin-top:1px}
 .tile .delta{font-size:.75rem;color:var(--ink2);margin-top:1px}
 .tile .delta.up{color:var(--good-text)} .tile .delta.down{color:var(--crit)}
 .tile .delta.day{color:var(--muted)}
@@ -750,6 +751,12 @@ function demoCameraScene(coll){
 
 /* ---------- series helpers ---------- */
 function latestOf(pts){ return pts && pts.length ? pts[pts.length-1] : null; }
+function minMaxOf(pts){
+  if (!pts || !pts.length) return null;
+  let min=Infinity, max=-Infinity;
+  for (const [,v] of pts){ if (v<min) min=v; if (v>max) max=v; }
+  return isFinite(min) && isFinite(max) ? {min,max} : null;
+}
 function valueAt(pts, t, tolMs){
   if (!pts || !pts.length) return null;
   const i = nearestIdx(pts.map(p=>p[0]), t);
@@ -1277,9 +1284,15 @@ function renderDashboard(){
         tile.append(el('div',{class:'lbl'},'Rain today'),
           el('div',{class:'val'}, fmtVal(today,nz(s.decimals,1)), el('span',{class:'unit'},s.unit)),
           el('div',{class:'delta'},`yesterday ${fmtVal(yest,1)} ${s.unit}`));
+        const mm=minMaxOf(pts);
+        if (mm) tile.append(el('div',{class:'minmax'},
+          `min ${fmtVal(mm.min,nz(s.decimals,1))} · max ${fmtVal(mm.max,nz(s.decimals,1))} ${s.unit} (${state.range})`));
       } else {
         tile.append(el('div',{class:'lbl'},s.name),
           el('div',{class:'val'}, last?fmtVal(last[1],nz(s.decimals,2)):'–', el('span',{class:'unit'},s.unit)));
+        const mm=minMaxOf(pts);
+        if (mm) tile.append(el('div',{class:'minmax'},
+          `min ${fmtVal(mm.min,nz(s.decimals,2))} · max ${fmtVal(mm.max,nz(s.decimals,2))} ${s.unit} (${state.range})`));
         if (last){
           const prev=valueAt(pts,last[0]-864e5,3*36e5);
           if (prev!=null){
