@@ -217,6 +217,19 @@ table.data td{padding:4px 10px;text-align:right;font-variant-numeric:tabular-num
 #kiosk .kbtn{background:var(--surface);border:1px solid var(--border);border-radius:8px;
   padding:7px 12px;font-size:.95rem;line-height:1;color:inherit}
 #kiosk .kbtn:hover{background:var(--tint)}
+/* numeric carousel slides: sensor value cards + days-till-empty */
+#kiosk .k-num{flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center}
+#kiosk .k-num .tiles{width:100%;margin:0;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+#kiosk .k-num .tile{padding:16px 18px}
+#kiosk .k-num .tile .lbl{font-size:.9rem}
+#kiosk .k-num .tile .val{font-size:2.1rem}
+#kiosk .k-num .tile .minmax,#kiosk .k-num .tile .delta,#kiosk .k-num .tile .status{font-size:.9rem}
+#kiosk .k-daycard{margin:auto;max-width:820px;width:100%}
+#kiosk .k-daycard .proj-days{font-size:3.6rem}
+#kiosk .k-daycard .proj-days .unit{font-size:1.1rem}
+#kiosk .k-daycard .proj-days .proj-date{font-size:1.4rem}
+#kiosk .k-daycard .delta{font-size:1.15rem;margin-top:10px}
+#kiosk .k-daycard .empty{font-size:1.1rem;text-align:center}
 </style>
 </head>
 <body>
@@ -333,7 +346,7 @@ function defaultConfig(){
       location: { lat:null, lon:null, label:'' },
       theme: 'auto',
       forceDemo: false,
-      kiosk: { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[] },
+      kiosk: { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[], showValues:false, showDays:false },
       /* "days till empty" projection for tank (kind:'level') sensors — the window is
          user-configurable from the projection card. diameterM lives per-sensor (below)
          so the calculation can move from "assume equal" to real per-tank volumes
@@ -1198,6 +1211,26 @@ function collIcon(coll){
 }
 
 /* ---------- tank projection card ---------- */
+/* the "days till empty" readout (big number + usage lines). Shared by the
+   dashboard card and the carousel "days" slide so both stay in step. */
+function tankProjReadoutRows(coll, proj){
+  const hasDiameters = coll.sensors.some(s=>s.kind==='level' && s.diameterM!=null && s.diameterM>0);
+  const levelUnit = (coll.sensors.find(s=>s.kind==='level')||{}).unit || 'm';
+  const unit = hasDiameters ? 'L' : levelUnit;
+  const scale = hasDiameters ? 1000 : 1; /* m³ (area in m² × height in m) → L */
+  const dec = hasDiameters ? 0 : 2;
+  const days = proj.daysLeft;
+  const color = !isFinite(days) ? cssVar('--good-text') : days<7 ? cssVar('--crit') : days<30 ? cssVar('--warn') : cssVar('--good-text');
+  return [
+    el('div',{class:'proj-days',style:`color:${color}`},
+      el('span',{class:'proj-num'},
+        isFinite(days) ? fmtVal(Math.min(days,999),1) : '—',
+        el('span',{class:'unit'}, isFinite(days) ? ' days' : ' steady — no net usage in this window')),
+      isFinite(days) ? el('span',{class:'proj-date'}, fmtProjDate(proj.updatedAt + days*864e5)) : null),
+    el('div',{class:'delta'}, `${hasDiameters?'volume':'combined level'} now: ${fmtVal(proj.current*scale,dec)} ${unit} (both tanks)`),
+    el('div',{class:'delta'}, `usage: ${fmtVal(proj.ratePerDay*scale,dec)} ${unit}/day`),
+  ];
+}
 function tankProjectionCard(coll){
   const proj = tankUsageProjection(coll, state.tankProj.bySensor);
   const hasDiameters = coll.sensors.some(s=>s.kind==='level' && s.diameterM!=null && s.diameterM>0);
@@ -1225,26 +1258,59 @@ function tankProjectionCard(coll){
     body.append(el('div',{class:'empty'},'Not enough recent data yet to project usage.'));
     return card;
   }
-  const levelUnit = (coll.sensors.find(s=>s.kind==='level')||{}).unit || 'm';
-  const unit = hasDiameters ? 'L' : levelUnit;
-  const scale = hasDiameters ? 1000 : 1; /* m³ (area in m² × height in m) → L */
-  const dec = hasDiameters ? 0 : 2;
-  const days = proj.daysLeft;
-  const color = !isFinite(days) ? cssVar('--good-text') : days<7 ? cssVar('--crit') : days<30 ? cssVar('--warn') : cssVar('--good-text');
-  const rows = [
-    el('div',{class:'proj-days',style:`color:${color}`},
-      el('span',{class:'proj-num'},
-        isFinite(days) ? fmtVal(Math.min(days,999),1) : '—',
-        el('span',{class:'unit'}, isFinite(days) ? ' days' : ' steady — no net usage in this window')),
-      isFinite(days) ? el('span',{class:'proj-date'}, fmtProjDate(proj.updatedAt + days*864e5)) : null),
-    el('div',{class:'delta'}, `${hasDiameters?'volume':'combined level'} now: ${fmtVal(proj.current*scale,dec)} ${unit} (both tanks)`),
-    el('div',{class:'delta'}, `usage: ${fmtVal(proj.ratePerDay*scale,dec)} ${unit}/day`),
-  ];
+  const rows = tankProjReadoutRows(coll, proj);
   if (!hasDiameters) rows.push(el('p',{class:'help'},
     'Assumes every tank in this collection shares one diameter. Set each tank’s real diameter in ',
     el('a',{href:'#manage'},'Manage'),' (edit sensor) once known, for a volume-based estimate.'));
   body.append(...rows);
   return card;
+}
+
+/* one stat tile for a sensor — current value with min/max, day deltas and
+   alert status. Shared by the dashboard grid and the carousel value slide. */
+function sensorTile(s){
+  const pts=state.data.bySensor.get(s.id)||[];
+  const last=latestOf(pts);
+  const color=sensorColor(s);
+  const tile=el('div',{class:'tile'});
+  if (s.kind==='rain'){
+    const midnight=new Date(); midnight.setHours(0,0,0,0);
+    const today=pts.filter(p=>p[0]>=midnight.getTime()).reduce((a,p)=>a+p[1],0);
+    const yest=pts.filter(p=>p[0]>=midnight.getTime()-864e5&&p[0]<midnight.getTime()).reduce((a,p)=>a+p[1],0);
+    tile.append(el('div',{class:'lbl'},'Rain today'),
+      el('div',{class:'val'}, fmtVal(today,nz(s.decimals,1)), el('span',{class:'unit'},s.unit)),
+      el('div',{class:'delta'},`yesterday ${fmtVal(yest,1)} ${s.unit}`));
+    const mm=minMaxOf(pts);
+    if (mm) tile.append(el('div',{class:'minmax'},
+      `min ${fmtVal(mm.min,nz(s.decimals,1))} · max ${fmtVal(mm.max,nz(s.decimals,1))} ${s.unit} (${state.range})`));
+  } else {
+    tile.append(el('div',{class:'lbl'},s.name),
+      el('div',{class:'val'}, last?fmtVal(last[1],nz(s.decimals,2)):'–', el('span',{class:'unit'},s.unit)));
+    const mm=minMaxOf(pts);
+    if (mm) tile.append(el('div',{class:'minmax'},
+      `min ${fmtVal(mm.min,nz(s.decimals,2))} · max ${fmtVal(mm.max,nz(s.decimals,2))} ${s.unit} (${state.range})`));
+    if (last){
+      const prev=valueAt(pts,last[0]-864e5,3*36e5);
+      if (prev!=null){
+        const d=last[1]-prev;
+        const cls = s.kind==='voltage' ? (d>=0?'up':'down') : '';
+        tile.append(el('div',{class:'delta '+cls},
+          `${d>=0?'▲':'▼'} ${fmtVal(Math.abs(d),nz(s.decimals,2))} vs 24 h ago`));
+      }
+      if (s.kind==='level'){
+        const base=dayBaseline(pts);
+        if (base!=null){
+          const dd=last[1]-base;
+          tile.append(el('div',{class:'delta day'},
+            `${dd>=0?'▲':'▼'} ${fmtVal(Math.abs(dd),nz(s.decimals,2))} today (since midnight)`));
+        }
+      }
+      if (s.min!=null&&last[1]<s.min) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ below min'));
+      else if (s.max!=null&&last[1]>s.max) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ above max'));
+      const sp=sparkline(pts,color); if (sp) tile.append(sp);
+    } else tile.append(el('div',{class:'delta'},'awaiting data'));
+  }
+  return tile;
 }
 
 /* ---------- dashboard ---------- */
@@ -1272,50 +1338,7 @@ function renderDashboard(){
       collIcon(coll), el('h2',{},coll.name)));
     /* tiles */
     const tiles=el('div',{class:'tiles'});
-    for (const s of coll.sensors){
-      const pts=state.data.bySensor.get(s.id)||[];
-      const last=latestOf(pts);
-      const color=sensorColor(s);
-      const tile=el('div',{class:'tile'});
-      if (s.kind==='rain'){
-        const midnight=new Date(); midnight.setHours(0,0,0,0);
-        const today=pts.filter(p=>p[0]>=midnight.getTime()).reduce((a,p)=>a+p[1],0);
-        const yest=pts.filter(p=>p[0]>=midnight.getTime()-864e5&&p[0]<midnight.getTime()).reduce((a,p)=>a+p[1],0);
-        tile.append(el('div',{class:'lbl'},'Rain today'),
-          el('div',{class:'val'}, fmtVal(today,nz(s.decimals,1)), el('span',{class:'unit'},s.unit)),
-          el('div',{class:'delta'},`yesterday ${fmtVal(yest,1)} ${s.unit}`));
-        const mm=minMaxOf(pts);
-        if (mm) tile.append(el('div',{class:'minmax'},
-          `min ${fmtVal(mm.min,nz(s.decimals,1))} · max ${fmtVal(mm.max,nz(s.decimals,1))} ${s.unit} (${state.range})`));
-      } else {
-        tile.append(el('div',{class:'lbl'},s.name),
-          el('div',{class:'val'}, last?fmtVal(last[1],nz(s.decimals,2)):'–', el('span',{class:'unit'},s.unit)));
-        const mm=minMaxOf(pts);
-        if (mm) tile.append(el('div',{class:'minmax'},
-          `min ${fmtVal(mm.min,nz(s.decimals,2))} · max ${fmtVal(mm.max,nz(s.decimals,2))} ${s.unit} (${state.range})`));
-        if (last){
-          const prev=valueAt(pts,last[0]-864e5,3*36e5);
-          if (prev!=null){
-            const d=last[1]-prev;
-            const cls = s.kind==='voltage' ? (d>=0?'up':'down') : '';
-            tile.append(el('div',{class:'delta '+cls},
-              `${d>=0?'▲':'▼'} ${fmtVal(Math.abs(d),nz(s.decimals,2))} vs 24 h ago`));
-          }
-          if (s.kind==='level'){
-            const base=dayBaseline(pts);
-            if (base!=null){
-              const dd=last[1]-base;
-              tile.append(el('div',{class:'delta day'},
-                `${dd>=0?'▲':'▼'} ${fmtVal(Math.abs(dd),nz(s.decimals,2))} today (since midnight)`));
-            }
-          }
-          if (s.min!=null&&last[1]<s.min) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ below min'));
-          else if (s.max!=null&&last[1]>s.max) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ above max'));
-          const sp=sparkline(pts,color); if (sp) tile.append(sp);
-        } else tile.append(el('div',{class:'delta'},'awaiting data'));
-      }
-      tiles.append(tile);
-    }
+    for (const s of coll.sensors) tiles.append(sensorTile(s));
     view.append(tiles);
     /* controls row */
     if (coll.controls.length){
@@ -1764,6 +1787,17 @@ function buildSlides(){
     if (coll.camera && coll.camera.manifestUrl)
       slides.push({id:`${coll.id}|cam`, group:coll.name, title:(coll.camera.label||'Camera'),
         sub:'camera', kind:'camera', coll, hasData:true});
+    /* numeric cards — opt-in from the Carousel tab (Object.assign-backfilled) */
+    const K=config.settings.kiosk||{};
+    if (K.showValues && coll.sensors.length)
+      slides.push({id:`${coll.id}|vals`, group:coll.name, title:'Current values',
+        sub:`now · min · max (${state.range})`, kind:'values', coll,
+        hasData: coll.sensors.some(s=>(state.data.bySensor.get(s.id)||[]).length)});
+    if (K.showDays && coll.sensors.some(s=>s.kind==='level')){
+      const proj=tankUsageProjection(coll, state.tankProj.bySensor);
+      slides.push({id:`${coll.id}|days`, group:coll.name, title:'Days till empty',
+        sub:'usage projection', kind:'days', coll, hasData:!!proj});
+    }
     const rain=coll.sensors.filter(s=>s.kind==='rain');
     const rest=coll.sensors.filter(s=>s.kind!=='rain');
     const byGroup=new Map();
@@ -1841,11 +1875,30 @@ function renderSlideInto(stage, slide){
     const H=chart.clientHeight||Math.round((stage.clientHeight||600)*0.78);
     chart.textContent='';
     if (slide.kind==='camera') drawKioskCamera(chart, slide.coll);
+    else if (slide.kind==='values') drawKioskValues(chart, slide.coll);
+    else if (slide.kind==='days') drawKioskDays(chart, slide.coll);
     else if (slide.kind==='bar') drawBarChart(chart,{cats:slide.cats,series:slide.series,
       unit:slide.unit,dec:slide.dec,todayIdx:slide.todayIdx,height:H});
     else drawLineChart(chart,{series:slide.series,unit:slide.unit,dec:slide.dec,
       includeZero:slide.includeZero,now:slide.now,height:H});
   });
+}
+/* carousel value slide — the same stat tiles as the dashboard, scaled up */
+function drawKioskValues(chart, coll){
+  const tiles=el('div',{class:'tiles'});
+  for (const s of coll.sensors) tiles.append(sensorTile(s));
+  chart.append(el('div',{class:'k-num'}, tiles));
+}
+/* carousel days-till-empty slide — reuses the projection readout */
+function drawKioskDays(chart, coll){
+  const card=el('div',{class:'k-daycard'});
+  if (state.tankProj.error) card.append(el('div',{class:'empty'},'⚠ '+state.tankProj.error));
+  else {
+    const proj=tankUsageProjection(coll, state.tankProj.bySensor);
+    if (!proj) card.append(el('div',{class:'empty'},'Not enough recent data yet to project usage.'));
+    else card.append(...tankProjReadoutRows(coll, proj));
+  }
+  chart.append(card);
 }
 function drawKioskCamera(chart, coll){
   const cam=coll.camera, wrap=el('div',{class:'k-cam'});
@@ -2038,6 +2091,11 @@ function renderKiosk(){
   const persist=()=>{ K.dwellSec=clamp(parseInt(dwell.value,10)||12,3,600);
     K.loop=loop.checked; K.shuffle=shuffle.checked; K.fullscreen=fs.checked; K.autostart=auto.checked; saveConfig(); };
   [dwell,loop,shuffle,fs,auto].forEach(i=>i.addEventListener('change',persist));
+  /* numeric cards are opt-in; toggling one adds/removes its slides, so re-render */
+  const valCards=el('input',{type:'checkbox'}); valCards.checked=!!K.showValues;
+  const dayCard=el('input',{type:'checkbox'}); dayCard.checked=!!K.showDays;
+  const persistCards=()=>{ K.showValues=valCards.checked; K.showDays=dayCard.checked; saveConfig(); render(); };
+  [valCards,dayCard].forEach(i=>i.addEventListener('change',persistCards));
 
   const slides=buildSlides();
   const hidden=new Set(K.hidden||[]);
@@ -2050,6 +2108,10 @@ function renderKiosk(){
     el('label',{class:'chkline'}, shuffle, el('span',{},'Shuffle order each time it starts')),
     el('label',{class:'chkline'}, fs, el('span',{},'Go fullscreen on start')),
     el('label',{class:'chkline'}, auto, el('span',{},'Auto-start when this page loads')),
+    el('div',{class:'subhead',style:'margin-top:14px'},'Numeric cards'),
+    el('label',{class:'chkline'}, valCards, el('span',{},'Sensor value cards (current · min · max)')),
+    el('label',{class:'chkline'}, dayCard, el('span',{},'Days-till-empty projection')),
+    el('p',{class:'help'},'Off by default. When on, each collection’s numeric card joins the list below, where you can pick exactly which to show — just like the plots.'),
     el('p',{class:'help'},'Auto-start turns a spare screen into a wall display — it opens straight into the carousel. Or bookmark ',
       el('code',{},'#kiosk-play'),' to force it on any device.'));
 
@@ -2112,7 +2174,8 @@ addEventListener('hashchange',render);
     config=await loadConfig();
     /* backfill kiosk settings for configs saved before the carousel existed */
     config.settings.kiosk = Object.assign(
-      { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[] },
+      { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[],
+        showValues:false, showDays:false },
       config.settings.kiosk||{});
     /* backfill the tank "days till empty" window for configs saved before it existed */
     config.settings.tankProjection = Object.assign(

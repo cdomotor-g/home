@@ -232,7 +232,11 @@ channel override.
 - **Carousel (kiosk mode)** — turn a spare screen into a wall display: a
   full-screen rotation that rolls through the plots one at a time. The
   **Carousel** tab lets you tick exactly which plots to show, set seconds per
-  plot, loop/shuffle, and go fullscreen. Data refreshes while it runs, and it
+  plot, loop/shuffle, and go fullscreen. Numeric cards can join the rotation
+  too — flip on **Sensor value cards** (current · min · max) and/or the
+  **Days-till-empty projection** under _Numeric cards_, and each collection’s
+  card appears in the include list alongside the plots (off by default). Data
+  refreshes while it runs, and it
   requests a screen wake-lock so the display never sleeps. Controls (Exit,
   prev/pause/next, fullscreen, clock) auto-hide; keyboard is `Esc` exit,
   `Space` pause, `←`/`→` to step, `f` fullscreen. Enable **auto-start**, or
