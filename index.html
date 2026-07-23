@@ -881,6 +881,33 @@ function tankUsageProjection(coll, bySensor){
   const daysLeft = ratePerHour > 0 ? current / (ratePerHour*24) : Infinity;
   return { current, ratePerDay: ratePerHour*24, daysLeft, elapsedHrs, updatedAt: series[series.length-1][0] };
 }
+/* per-calendar-day water usage (drawdown only) for a collection's tanks over
+   [t0,t1] — the history behind the projection card's "usage/day" number. Uses
+   the same usage-only rule as tankUsageProjection: positive steps (rain /
+   refills) are ignored so a refill mid-day can't cancel out the real draw
+   either side of it. Values are in the combined series' native units (m³ when
+   tank diameters are set, else summed level in m); the caller scales m³→L. */
+function tankDailyUsage(coll, bySensor, t0, t1){
+  const series = combinedTankSeries(coll, bySensor);
+  const draw = new Map(); /* dayStart → drawdown */
+  for (let i=1;i<series.length;i++){
+    const [t,v] = series[i];
+    if (t < t0 || t > t1) continue;
+    const d = v - series[i-1][1];
+    if (d >= 0) continue;
+    const day = new Date(t); day.setHours(0,0,0,0);
+    const k = day.getTime();
+    draw.set(k, (draw.get(k)||0) + (-d));
+  }
+  const cats = [];
+  const d = new Date(t0); d.setHours(0,0,0,0);
+  while (d.getTime() <= t1){
+    const k = d.getTime();
+    cats.push({ t:k, label: fmtDay(k), value: draw.get(k)||0 });
+    d.setDate(d.getDate()+1);
+  }
+  return cats;
+}
 
 /* ---------- tooltip singleton ---------- */
 const tip = document.getElementById('tip');
@@ -1265,6 +1292,26 @@ function tankProjectionCard(coll){
   body.append(...rows);
   return card;
 }
+/* daily water-usage bar chart — one bar per calendar day over the selected
+   range, sharing the projection card's units (L when tank diameters are set,
+   else summed level in m). This is the history the "usage/day" figure averages. */
+function tankUsageChartCard(coll){
+  const now=Date.now(), rangeDays=RANGES[state.range].days;
+  const hasDiameters = coll.sensors.some(s=>s.kind==='level' && s.diameterM!=null && s.diameterM>0);
+  const levelUnit = (coll.sensors.find(s=>s.kind==='level')||{}).unit || 'm';
+  const unit = hasDiameters ? 'L' : levelUnit;
+  const scale = hasDiameters ? 1000 : 1; /* m³ → L */
+  const dec = hasDiameters ? 0 : 2;
+  const cats = tankDailyUsage(coll, state.data.bySensor, now-rangeDays*864e5, now)
+    .map(c=>({ t:c.t, label:c.label, value:+(c.value*scale).toFixed(dec) }));
+  const series=[{name:'Daily usage',color:cssVar('--accent'),values:cats.map(c=>c.value),bar:true}];
+  return chartCard({
+    title:'Daily water usage',
+    sub:unit+'/day', series,
+    renderChart:b=>drawBarChart(b,{cats,series,unit,dec,todayIdx:cats.length-1}),
+    renderTable:()=>catsTable(cats,series,unit,dec),
+  });
+}
 
 /* one stat tile for a sensor — current value with min/max, day deltas and
    alert status. Shared by the dashboard grid and the carousel value slide. */
@@ -1351,6 +1398,8 @@ function renderDashboard(){
     /* camera stills first, when the collection has one */
     if (coll.camera && coll.camera.manifestUrl) grid.append(cameraCard(coll));
     if (coll.sensors.some(s=>s.kind==='level')) grid.append(tankProjectionCard(coll));
+    if (coll.sensors.some(s=>s.kind==='level' && (state.data.bySensor.get(s.id)||[]).length))
+      grid.append(tankUsageChartCard(coll));
     const rain=coll.sensors.filter(s=>s.kind==='rain');
     const rest=coll.sensors.filter(s=>s.kind!=='rain');
     const byGroup=new Map();
