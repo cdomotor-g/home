@@ -1087,13 +1087,17 @@ function drawLineChart(body, o){
 
 /* ---------- bar chart (rain) ---------- */
 function drawBarChart(body, o){
-  /* o: {cats:[{t,label}], series:[{name,color,values}], unit, dec, height?, todayIdx?} */
+  /* o: {cats:[{t,label}], series:[{name,color,values}], unit, dec, height?, todayIdx?, tightY?} */
   const W=Math.max(300, body.clientWidth||640), H=o.height||225;
   const m={l:40,r:10,t:16,b:26}, pw=W-m.l-m.r, ph=H-m.t-m.b;
   const nS=o.series.length, nC=o.cats.length;
   if (!nC){ body.append(el('div',{class:'empty'},'No data for this range.')); return; }
   let vmax=0; for (const s of o.series) for (const v of s.values) if (v!=null&&v>vmax) vmax=v;
-  const yT=niceTicks(0, Math.max(vmax,1)*1.12, 3);
+  /* tightY: let the period's peak set the top (nice-rounded, slim headroom) so
+     small-magnitude series fill the height; otherwise floor the top at 1 so a
+     near-empty range (e.g. no rain) still reads against a stable axis */
+  const top = o.tightY ? (vmax>0 ? vmax*1.08 : 1) : Math.max(vmax,1)*1.12;
+  const yT=niceTicks(0, top, 3);
   const X=i=>m.l+i/nC*pw, band=pw/nC;
   const Y=v=>m.t+ph-(v/Math.max(1e-9,yT.hi))*ph;
   const gridC=cssVar('--grid'), axisC=cssVar('--axis'), mutedC=cssVar('--muted');
@@ -1308,7 +1312,7 @@ function tankUsageChartCard(coll){
   return chartCard({
     title:'Daily water usage',
     sub:unit+'/day', series,
-    renderChart:b=>drawBarChart(b,{cats,series,unit,dec,todayIdx:cats.length-1}),
+    renderChart:b=>drawBarChart(b,{cats,series,unit,dec,todayIdx:cats.length-1,tightY:true}),
     renderTable:()=>catsTable(cats,series,unit,dec),
   });
 }
