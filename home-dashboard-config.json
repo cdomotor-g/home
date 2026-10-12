@@ -41,6 +41,8 @@
           "decimals": 2,
           "min": 0.3,
           "max": null,
+          "plotMin": 0,
+          "plotMax": 2.4,
           "forecastKey": "",
           "diameterM": null
         },
@@ -54,6 +56,8 @@
           "decimals": 2,
           "min": 0.3,
           "max": null,
+          "plotMin": 0,
+          "plotMax": 2.4,
           "forecastKey": "",
           "diameterM": null
         }
@@ -75,6 +79,8 @@
           "decimals": 1,
           "min": null,
           "max": null,
+          "plotMin": null,
+          "plotMax": null,
           "forecastKey": "precipitation"
         },
         {
@@ -87,6 +93,8 @@
           "decimals": 1,
           "min": null,
           "max": null,
+          "plotMin": null,
+          "plotMax": null,
           "forecastKey": "temperature_2m"
         },
         {
@@ -99,6 +107,8 @@
           "decimals": 1,
           "min": null,
           "max": null,
+          "plotMin": null,
+          "plotMax": null,
           "forecastKey": "surface_pressure"
         },
         {
@@ -111,6 +121,8 @@
           "decimals": 0,
           "min": null,
           "max": null,
+          "plotMin": null,
+          "plotMax": null,
           "forecastKey": "relative_humidity_2m"
         }
       ],
@@ -132,6 +144,8 @@
           "decimals": 2,
           "min": 11.5,
           "max": 15,
+          "plotMin": null,
+          "plotMax": null,
           "forecastKey": ""
         },
         {
@@ -144,6 +158,8 @@
           "decimals": 1,
           "min": null,
           "max": null,
+          "plotMin": null,
+          "plotMax": null,
           "forecastKey": ""
         }
       ],
@@ -166,6 +182,8 @@
           "decimals": 1,
           "min": null,
           "max": null,
+          "plotMin": null,
+          "plotMax": null,
           "forecastKey": "temperature_2m",
           "channelId": "3425088",
           "readKey": "22KKEIC5ZVALKODV"
@@ -180,6 +198,8 @@
           "decimals": 1,
           "min": null,
           "max": null,
+          "plotMin": null,
+          "plotMax": null,
           "forecastKey": "relative_humidity_2m",
           "channelId": "3425088",
           "readKey": "22KKEIC5ZVALKODV"
@@ -194,6 +214,8 @@
           "decimals": 1,
           "min": null,
           "max": null,
+          "plotMin": null,
+          "plotMax": null,
           "forecastKey": "",
           "channelId": "3425088",
           "readKey": "22KKEIC5ZVALKODV"

@@ -355,8 +355,8 @@ function defaultConfig(){
     },
     collections: [
       { id:'water', name:'Water tanks', icon:'💧', sensors:[
-          { id:'tank1', name:'Tank 1', unit:'m', kind:'level', field:1, slot:1, decimals:2, min:0.3, max:null, forecastKey:'', diameterM:null },
-          { id:'tank2', name:'Tank 2', unit:'m', kind:'level', field:2, slot:2, decimals:2, min:0.3, max:null, forecastKey:'', diameterM:null },
+          { id:'tank1', name:'Tank 1', unit:'m', kind:'level', field:1, slot:1, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.4, forecastKey:'', diameterM:null },
+          { id:'tank2', name:'Tank 2', unit:'m', kind:'level', field:2, slot:2, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.4, forecastKey:'', diameterM:null },
         ], controls:[] },
       { id:'weather', name:'Weather station', icon:'🌦️', sensors:[
           { id:'rain', name:'Rain gauge', unit:'mm', kind:'rain', field:3, slot:1, decimals:1, min:null, max:null, forecastKey:'precipitation' },
@@ -944,6 +944,26 @@ function niceTicks(min, max, n=4){
   return {lo,hi:ticks[ticks.length-1],ticks,step};
 }
 function tickDec(step){ return step>=1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step)-1e-9)); }
+/* configured chart axis limits for the sensors sharing one chart — the widest
+   of whatever is set; null = fit the data. */
+function plotRange(ss){
+  const los=ss.map(s=>s.plotMin).filter(v=>v!=null&&isFinite(v));
+  const his=ss.map(s=>s.plotMax).filter(v=>v!=null&&isFinite(v));
+  let yMin=los.length?Math.min(...los):null, yMax=his.length?Math.max(...his):null;
+  if (yMin!=null && yMax!=null && yMin>=yMax) yMin=yMax=null; /* nonsense → auto */
+  return {yMin, yMax};
+}
+/* pin nice ticks to configured endpoints: drop ticks outside, label the pinned
+   end itself unless a tick already sits close to it */
+function pinTicks(yT, lo, hi){
+  const eps=yT.step*1e-6, near=yT.step*0.35;
+  const ticks=yT.ticks.filter(t=>(lo==null||t>=lo-eps)&&(hi==null||t<=hi+eps));
+  if (lo!=null && !ticks.some(t=>Math.abs(t-lo)<near)) ticks.unshift(lo);
+  if (hi!=null && !ticks.some(t=>Math.abs(t-hi)<near)) ticks.push(hi);
+  return {...yT, ticks, lo:lo!=null?lo:yT.lo, hi:hi!=null?hi:yT.hi};
+}
+const valDec = (v, base) => { let d=base; while (d<4 && Math.abs(v-+v.toFixed(d))>1e-9) d++; return d; };
+let clipSeq = 0;
 function timeTicks(t0, t1){
   const span=t1-t0, target=5;
   const mins=[15,30,60,180,360,720,1440,2880,4320,10080,20160,43200];
@@ -997,7 +1017,7 @@ addEventListener('resize', repaintCharts);
 
 /* ---------- line chart ---------- */
 function drawLineChart(body, o){
-  /* o: {series:[{name,color,points,dash,wash}], unit, dec, height?, now?, includeZero?} */
+  /* o: {series:[{name,color,points,dash,wash}], unit, dec, height?, now?, includeZero?, yMin?, yMax?} */
   const live = o.series.filter(s => s.points && s.points.length);
   if (!live.length){ body.append(el('div',{class:'empty'},'No data yet — sensor not reporting for this range.')); return; }
   const W = Math.max(300, body.clientWidth||640), H = o.height||235;
@@ -1008,9 +1028,14 @@ function drawLineChart(body, o){
   }
   if (o.now!=null) t1=Math.max(t1,o.now);
   if (o.includeZero) v0=Math.min(0,v0);
+  /* configured axis limits pin that end exactly (no padding); data beyond is clipped */
+  const fLo=o.yMin!=null, fHi=o.yMax!=null;
+  if (fLo) v0=o.yMin; if (fHi) v1=o.yMax;
+  if (v1<=v0){ if (fLo&&!fHi) v1=v0+1; else if (fHi&&!fLo) v0=v1-1; }
   if (v0===v1){ v0-=1; v1+=1; }
   const pad=(v1-v0)*0.08;
-  const yT=niceTicks(v0-((o.includeZero&&v0===0)?0:pad), v1+pad, 4);
+  const yT=pinTicks(niceTicks(fLo?v0:v0-((o.includeZero&&v0===0)?0:pad), fHi?v1:v1+pad, 4),
+    fLo?v0:null, fHi?v1:null);
   const X=t=>m.l+(t-t0)/Math.max(1,t1-t0)*pw;
   const Y=v=>m.t+ph-(v-yT.lo)/Math.max(1e-9,yT.hi-yT.lo)*ph;
   const surface=cssVar('--surface'), gridC=cssVar('--grid'), axisC=cssVar('--axis'), mutedC=cssVar('--muted');
@@ -1020,7 +1045,7 @@ function drawLineChart(body, o){
   for (const tv of yT.ticks){
     root.append(svgEl('line',{x1:m.l,y1:Y(tv),x2:m.l+pw,y2:Y(tv),stroke:gridC,'stroke-width':1}));
     root.append(svgEl('text',{x:m.l-7,y:Y(tv)+3.5,'text-anchor':'end','font-size':10,fill:mutedC,
-      style:'font-variant-numeric:tabular-nums'}, fmtVal(tv, tickDec(yT.step))));
+      style:'font-variant-numeric:tabular-nums'}, fmtVal(tv, valDec(tv, tickDec(yT.step)))));
   }
   /* x ticks */
   const xT=timeTicks(t0,t1);
@@ -1034,22 +1059,26 @@ function drawLineChart(body, o){
     root.append(svgEl('line',{x1:X(o.now),y1:m.t,x2:X(o.now),y2:m.t+ph,stroke:axisC,'stroke-width':1}));
     root.append(svgEl('text',{x:X(o.now)+4,y:m.t+9,'font-size':9,fill:mutedC},'now'));
   }
-  /* series */
+  /* series — clipped to the plot area so pinned axis limits hold */
+  const clipId=`plotclip${++clipSeq}`;
+  root.append(svgEl('clipPath',{id:clipId},svgEl('rect',{x:m.l,y:m.t-6,width:pw+6,height:ph+6})));
+  const plot=svgEl('g',{'clip-path':`url(#${clipId})`});
+  root.append(plot);
   for (const s of live){
     const d = s.points.map((p,i)=>(i?'L':'M')+X(p[0]).toFixed(1)+' '+Y(p[1]).toFixed(1)).join('');
     if (s.wash && live.length===1){
       const areaD = d + `L${X(s.points[s.points.length-1][0]).toFixed(1)} ${m.t+ph}L${X(s.points[0][0]).toFixed(1)} ${m.t+ph}Z`;
-      root.append(svgEl('path',{d:areaD,fill:s.color,'fill-opacity':.1,stroke:'none'}));
+      plot.append(svgEl('path',{d:areaD,fill:s.color,'fill-opacity':.1,stroke:'none'}));
     }
-    root.append(svgEl('path',{d,fill:'none',stroke:s.color,'stroke-width':2,
+    plot.append(svgEl('path',{d,fill:'none',stroke:s.color,'stroke-width':2,
       'stroke-linejoin':'round','stroke-linecap':'round',
       'stroke-dasharray': s.dash?'7 5':null}));
     const last=s.points[s.points.length-1];
-    root.append(svgEl('circle',{cx:X(last[0]),cy:Y(last[1]),r:4.5,fill:s.color,stroke:surface,'stroke-width':2}));
+    plot.append(svgEl('circle',{cx:X(last[0]),cy:Y(last[1]),r:4.5,fill:s.color,stroke:surface,'stroke-width':2}));
     /* selective direct label: the endpoint only */
     if (live.length<=4){
       const lx=Math.min(X(last[0])+7, m.l+pw-4);
-      root.append(svgEl('text',{x:lx,y:Y(last[1])-7,'font-size':10,'font-weight':600,
+      root.append(svgEl('text',{x:lx,y:clamp(Y(last[1])-7,m.t+9,m.t+ph-4),'font-size':10,'font-weight':600,
         fill:cssVar('--ink2'),'text-anchor':lx>m.l+pw-40?'end':'start',
         style:'font-variant-numeric:tabular-nums'}, fmtVal(last[1],o.dec)));
     }
@@ -1087,7 +1116,7 @@ function drawLineChart(body, o){
 
 /* ---------- bar chart (rain) ---------- */
 function drawBarChart(body, o){
-  /* o: {cats:[{t,label}], series:[{name,color,values}], unit, dec, height?, todayIdx?, tightY?} */
+  /* o: {cats:[{t,label}], series:[{name,color,values}], unit, dec, height?, todayIdx?, tightY?, yMax?} */
   const W=Math.max(300, body.clientWidth||640), H=o.height||225;
   const m={l:40,r:10,t:16,b:26}, pw=W-m.l-m.r, ph=H-m.t-m.b;
   const nS=o.series.length, nC=o.cats.length;
@@ -1096,8 +1125,9 @@ function drawBarChart(body, o){
   /* tightY: let the period's peak set the top (nice-rounded, slim headroom) so
      small-magnitude series fill the height; otherwise floor the top at 1 so a
      near-empty range (e.g. no rain) still reads against a stable axis */
-  const top = o.tightY ? (vmax>0 ? vmax*1.08 : 1) : Math.max(vmax,1)*1.12;
-  const yT=niceTicks(0, top, 3);
+  const fHi = o.yMax!=null && o.yMax>0;   /* configured axis max: pinned, taller bars clipped */
+  const top = fHi ? o.yMax : o.tightY ? (vmax>0 ? vmax*1.08 : 1) : Math.max(vmax,1)*1.12;
+  const yT=fHi ? pinTicks(niceTicks(0, top, 3), 0, top) : niceTicks(0, top, 3);
   const X=i=>m.l+i/nC*pw, band=pw/nC;
   const Y=v=>m.t+ph-(v/Math.max(1e-9,yT.hi))*ph;
   const gridC=cssVar('--grid'), axisC=cssVar('--axis'), mutedC=cssVar('--muted');
@@ -1105,7 +1135,7 @@ function drawBarChart(body, o){
   for (const tv of yT.ticks){
     root.append(svgEl('line',{x1:m.l,y1:Y(tv),x2:m.l+pw,y2:Y(tv),stroke:gridC,'stroke-width':1}));
     root.append(svgEl('text',{x:m.l-7,y:Y(tv)+3.5,'text-anchor':'end','font-size':10,fill:mutedC,
-      style:'font-variant-numeric:tabular-nums'}, fmtVal(tv, tickDec(yT.step))));
+      style:'font-variant-numeric:tabular-nums'}, fmtVal(tv, valDec(tv, tickDec(yT.step)))));
   }
   root.append(svgEl('line',{x1:m.l,y1:m.t+ph,x2:m.l+pw,y2:m.t+ph,stroke:axisC,'stroke-width':1}));
   /* x labels — as many as fit at ~60px each, anchored so the last bar is always labelled */
@@ -1125,7 +1155,7 @@ function drawBarChart(body, o){
     o.series.forEach((s,si)=>{
       const v=s.values[i];
       if (v==null || v===0){ catBars.push(null); return; } /* zero: no mark; the tooltip still reads 0 */
-      const x=gx+si*(barW+gap), yTop=Y(v), h=m.t+ph-yTop;
+      const x=gx+si*(barW+gap), yTop=Y(Math.min(v, yT.hi)), h=m.t+ph-yTop;
       const r=Math.min(4, barW/2, Math.max(0,h));
       const d = h<=1
         ? `M${x} ${m.t+ph-1}h${barW}v1h${-barW}Z`
@@ -1141,7 +1171,7 @@ function drawBarChart(body, o){
   const lblIdx=new Set([maxI]); if (o.todayIdx!=null) lblIdx.add(o.todayIdx);
   for (const i of lblIdx){
     const v=a0[i]; if (!v) continue;
-    root.append(svgEl('text',{x:X(i)+band/2,y:Y(v)-5,'text-anchor':'middle','font-size':10,
+    root.append(svgEl('text',{x:X(i)+band/2,y:Math.max(m.t+9,Y(Math.min(v,yT.hi))-5),'text-anchor':'middle','font-size':10,
       'font-weight':600,fill:cssVar('--ink2'),style:'font-variant-numeric:tabular-nums'}, fmtVal(v,o.dec)));
   }
   /* hover: whole category band is the hit target; hovered bars lift */
@@ -1417,7 +1447,7 @@ function renderDashboard(){
       grid.append(chartCard({
         title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
         sub: unit, series,
-        renderChart: b=>drawLineChart(b,{series,unit,dec,includeZero:ss[0].kind==='wind'}),
+        renderChart: b=>drawLineChart(b,{series,unit,dec,includeZero:ss[0].kind==='wind',...plotRange(ss)}),
         renderTable: ()=>seriesTable(series,unit,dec),
       }));
     }
@@ -1430,7 +1460,7 @@ function renderDashboard(){
       grid.append(chartCard({
         title:`${s.name} — ${mode==='hour'?'hourly':mode==='day'?'daily':'weekly'} totals`,
         sub:s.unit, series,
-        renderChart:b=>drawBarChart(b,{cats,series,unit:s.unit,dec:1,todayIdx:cats.length-1}),
+        renderChart:b=>drawBarChart(b,{cats,series,unit:s.unit,dec:1,todayIdx:cats.length-1,yMax:s.plotMax}),
         renderTable:()=>catsTable(cats,series,s.unit,1),
       }));
     }
@@ -1500,13 +1530,13 @@ function renderForecastView(){
                     {name:'Forecast',color:cF,values:fVals,bar:true}];
       const todayIdx=labels.findIndex(c=>c.t<=now&&now<c.t+864e5);
       grid.append(chartCard({title:`${s.name} — daily totals`,sub:s.unit,series,
-        renderChart:b=>drawBarChart(b,{cats:labels,series,unit:s.unit,dec:1,todayIdx:todayIdx<0?null:todayIdx}),
+        renderChart:b=>drawBarChart(b,{cats:labels,series,unit:s.unit,dec:1,todayIdx:todayIdx<0?null:todayIdx,yMax:s.plotMax}),
         renderTable:()=>catsTable(labels,series,s.unit,1)}));
     } else {
       const series=[{name:'Measured',color:cA,points:apts},
                     {name:'Forecast',color:cF,points:fpts,dash:true}];
       grid.append(chartCard({title:s.name,sub:s.unit,series,
-        renderChart:b=>drawLineChart(b,{series,unit:s.unit,dec,now}),
+        renderChart:b=>drawLineChart(b,{series,unit:s.unit,dec,now,...plotRange([s])}),
         renderTable:()=>seriesTable(series,s.unit,dec)}));
     }
   }
@@ -1546,6 +1576,7 @@ function renderManage(){
         el('span',{class:'nm'},s.name),
         el('span',{class:'mi'},`${s.unit} · ${s.kind} · field ${s.field}${s.channelId?` @ch ${s.channelId}`:''}`),
         (s.kind==='level'&&s.diameterM!=null)?el('span',{class:'mi'},`⌀ ${s.diameterM} m`):null,
+        (s.plotMin!=null||s.plotMax!=null)?el('span',{class:'mi'},`axis ${s.plotMin??'auto'}–${s.plotMax??'auto'}`):null,
         fc&&fc.v?el('span',{class:'mi'},`↔ ${fc.l}`):null,
         el('div',{class:'spacer'}),
         el('button',{class:'ghost',onclick:()=>sensorForm(coll,s)},'Edit'),
@@ -1698,6 +1729,10 @@ function sensorForm(coll,s){
     {key:'decimals',label:'Decimal places',type:'number',min:0,max:4,step:1},
     {key:'min',label:'Alert below (optional)',type:'number',step:'any',help:'Tile shows a warning under this value.'},
     {key:'max',label:'Alert above (optional)',type:'number',step:'any'},
+    {key:'plotMin',label:'Chart axis minimum (optional)',type:'number',step:'any',
+      help:'Pins the bottom of this sensor’s chart. Leave blank to fit the data.'},
+    {key:'plotMax',label:'Chart axis maximum (optional)',type:'number',step:'any',
+      help:'Pins the top of this sensor’s chart (readings above it are clipped). Leave blank to fit the data.'},
     {key:'diameterM',label:'Tank diameter in metres (optional — level sensors only)',type:'number',step:'any',min:0,
       help:'Used by the “days till empty” card to turn level into volume. Leave blank while tanks are assumed to share one diameter; once set per-tank, that card switches to real per-tank volumes automatically.'},
     {key:'forecastKey',label:'Forecast variable (Open-Meteo)',type:'select',options:FC_KEYS,
@@ -1863,7 +1898,7 @@ function buildSlides(){
       slides.push({id:`${coll.id}|u|${gkey}`, group:coll.name,
         title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
         sub:unit, kind:'line', series, unit, dec,
-        includeZero: ss[0].kind==='wind',
+        includeZero: ss[0].kind==='wind', ...plotRange(ss),
         hasData: series.some(s=>s.points.length)});
     }
     for (const s of rain){
@@ -1874,7 +1909,7 @@ function buildSlides(){
       slides.push({id:`${coll.id}|r|${s.id}`, group:coll.name,
         title:`${s.name} — ${mode==='hour'?'hourly':mode==='day'?'daily':'weekly'} totals`,
         sub:s.unit, kind:'bar', cats, series, unit:s.unit, dec:1, todayIdx:cats.length-1,
-        hasData: pts.length>0});
+        yMax:s.plotMax, hasData: pts.length>0});
     }
   }
   /* forecast-vs-actual charts (same as the Forecast tab) */
@@ -1895,12 +1930,12 @@ function buildSlides(){
       const todayIdx=labels.findIndex(c=>c.t<=now&&now<c.t+864e5);
       slides.push({id:`fc|${s.id}`, group:'Forecast vs actual', title:`${s.name} — daily totals`,
         sub:s.unit, kind:'bar', cats:labels, series, unit:s.unit, dec:1,
-        todayIdx:todayIdx<0?null:todayIdx, hasData:true});
+        todayIdx:todayIdx<0?null:todayIdx, yMax:s.plotMax, hasData:true});
     } else {
       const series=[{name:'Measured',color:cA,points:apts},
                     {name:'Forecast',color:cF,points:fpts,dash:true}];
       slides.push({id:`fc|${s.id}`, group:'Forecast vs actual', title:s.name, sub:s.unit,
-        kind:'line', series, unit:s.unit, dec, now, hasData:true});
+        kind:'line', series, unit:s.unit, dec, now, ...plotRange([s]), hasData:true});
     }
   }
   return slides;
@@ -1931,9 +1966,9 @@ function renderSlideInto(stage, slide){
     else if (slide.kind==='values') drawKioskValues(chart, slide.coll);
     else if (slide.kind==='days') drawKioskDays(chart, slide.coll);
     else if (slide.kind==='bar') drawBarChart(chart,{cats:slide.cats,series:slide.series,
-      unit:slide.unit,dec:slide.dec,todayIdx:slide.todayIdx,height:H});
+      unit:slide.unit,dec:slide.dec,todayIdx:slide.todayIdx,yMax:slide.yMax,height:H});
     else drawLineChart(chart,{series:slide.series,unit:slide.unit,dec:slide.dec,
-      includeZero:slide.includeZero,now:slide.now,height:H});
+      includeZero:slide.includeZero,now:slide.now,yMin:slide.yMin,yMax:slide.yMax,height:H});
   });
 }
 /* carousel value slide — the same stat tiles as the dashboard, scaled up */
@@ -2233,6 +2268,12 @@ addEventListener('hashchange',render);
     /* backfill the tank "days till empty" window for configs saved before it existed */
     config.settings.tankProjection = Object.assign(
       { windowHours:72 }, config.settings.tankProjection||{});
+    /* backfill per-sensor chart axis limits for configs saved before they existed:
+       tanks default to a fixed 0–2.4 m axis, everything else auto-fits (null) */
+    for (const s of allSensors()){
+      if (!('plotMin' in s)) s.plotMin = s.kind==='level' ? 0 : null;
+      if (!('plotMax' in s)) s.plotMax = s.kind==='level' ? 2.4 : null;
+    }
     applyTheme();
     renderTabs();
     view.append(el('div',{class:'card'},el('p',{class:'note'},'Loading…')));
