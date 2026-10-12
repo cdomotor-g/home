@@ -22,7 +22,8 @@
       "hidden": []
     },
     "tankProjection": {
-      "windowHours": 72
+      "windowHours": 72,
+      "people": 5
     }
   },
   "collections": [
@@ -42,7 +43,7 @@
           "min": 0.3,
           "max": null,
           "plotMin": 0,
-          "plotMax": 2.4,
+          "plotMax": 2.1,
           "forecastKey": "",
           "diameterM": 2.6,
           "heightM": 1.8
@@ -58,7 +59,7 @@
           "min": 0.3,
           "max": null,
           "plotMin": 0,
-          "plotMax": 2.4,
+          "plotMax": 2.1,
           "forecastKey": "",
           "diameterM": 3,
           "heightM": 2

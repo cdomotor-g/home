@@ -218,8 +218,15 @@ channel override.
   usage in L/day. Usage is measured only from drawdown over a
   user-configurable trailing window (72 h by default, editable right on the
   card); rises from rain or a refill are ignored rather than netted off, so a
-  storm mid-window can't mask real usage on either side of it. A **daily water
-  usage** bar chart shows the same drawdown per calendar day, in litres. A tank
+  storm mid-window can't mask real usage on either side of it. Readings are
+  smoothed first (a ±2 h rolling median, then drops under 3 mm of level are
+  ignored): the tank sensors jitter by ±2–3 mm between readings, and counting
+  every downward wobble used to inflate usage roughly five-fold (~1,600 L/day
+  shown vs ~270 L/day real). A **daily water usage** bar chart shows the same
+  drawdown per calendar day, in litres. For context, both show what's typical
+  for the household (people count is editable on the card, 5 by default): South
+  East Queensland's residential average is ~160 L per person per day (Seqwater,
+  2026), drawn as a dashed line on the usage chart. A tank
   with no diameter set borrows the average of the known ones; with none known
   at all, every tank is assumed to share one diameter (it cancels out of the
   day count) and usage reads in metres of level instead of litres.

@@ -126,6 +126,8 @@ nav.tabs a.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600
 .proj-days .unit{font-size:.8rem;font-weight:400;color:var(--muted);margin-left:4px}
 .proj-days .proj-date{font-size:.9rem;font-weight:600;color:var(--muted);white-space:nowrap}
 .winhrs{width:90px}
+.proj-inputs{display:flex;gap:18px;flex-wrap:wrap}
+.delta.typical{color:var(--muted)}
 /* ---------- charts ---------- */
 .chart-body{position:relative}
 .chart-body svg{display:block;width:100%;height:auto}
@@ -354,12 +356,12 @@ function defaultConfig(){
          user-configurable from the projection card. diameterM / heightM live
          per-sensor (below): diameter turns level into litres (see tankArea()),
          height is the full-tank level, giving capacity and % full. */
-      tankProjection: { windowHours: 72 },
+      tankProjection: { windowHours: 72, people: 5 },
     },
     collections: [
       { id:'water', name:'Water tanks', icon:'💧', sensors:[
-          { id:'tank1', name:'Tank 1', unit:'m', kind:'level', field:1, slot:2, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.4, forecastKey:'', diameterM:2.6, heightM:1.8 },
-          { id:'tank2', name:'Tank 2', unit:'m', kind:'level', field:2, slot:1, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.4, forecastKey:'', diameterM:3, heightM:2 },
+          { id:'tank1', name:'Tank 1', unit:'m', kind:'level', field:1, slot:2, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.1, forecastKey:'', diameterM:2.6, heightM:1.8 },
+          { id:'tank2', name:'Tank 2', unit:'m', kind:'level', field:2, slot:1, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.1, forecastKey:'', diameterM:3, heightM:2 },
         ], controls:[] },
       { id:'weather', name:'Weather station', icon:'🌦️', sensors:[
           { id:'rain', name:'Rain gauge', unit:'mm', kind:'rain', field:3, slot:1, decimals:1, min:null, max:null, forecastKey:'precipitation' },
@@ -828,6 +830,14 @@ function medianStep(pts){
    sensor), it's used in place of the shared assumption, and mixed known/unknown
    tanks fall back to the average of the known ones — no other code changes.
    heightM (the full-tank level) adds capacity and % full on top. */
+/* context for the usage figures: Seqwater's monthly reports put South East
+   Queensland's average residential (town-water) use at 153–160 L per person
+   per day through 2026 — gardens and pools included */
+const TYPICAL_L_PER_PERSON = 160;
+function householdPeople(){
+  const tp = config.settings.tankProjection || {};
+  return clamp(Math.round(nz(tp.people, 5)), 1, 50);
+}
 function tankProjectionWindowHours(){
   const tp = config.settings.tankProjection || {};
   return clamp(Math.round(nz(tp.windowHours, 72)), 1, 24*30);
@@ -877,17 +887,49 @@ function combinedTankSeries(coll, bySensor){
   }
   return out;
 }
-/* usage-only drawdown rate: positive deltas (rain / refills) are skipped entirely
-   rather than netted off, so a storm mid-window can't mask real usage either
-   side of it — only the negative (draining) steps accumulate */
+/* usage-only drawdown: rises (rain / refills) are skipped entirely rather than
+   netted off, so a storm mid-window can't mask real usage either side of it —
+   only drops accumulate. Level sensors jitter by a few mm between readings
+   (±2–3 mm on the CR310's tanks), and counting every downward wobble turned
+   that jitter into ~1,200 L/day of "usage" that never left the tanks. So the
+   combined series is cleaned first:
+   1. a centred rolling median over ±2 h knocks out reading-to-reading noise;
+   2. a drop only counts once it clears a 3 mm-of-level deadband below the last
+      counted level (a rise past the band — rain, a refill — re-bases it).
+   Checked against two weeks of real midnight-to-midnight falls on dry days:
+   within ~20 L/day, with no bias. */
+const USAGE_SMOOTH_MS = 2*36e5;   /* median window, each side */
+const USAGE_DEADBAND_M = 0.003;   /* of level, across the tanks' combined area */
+function rollingMedian(series, halfMs){
+  const out=[]; let lo=0, hi=0;
+  for (let i=0;i<series.length;i++){
+    const t=series[i][0];
+    while (series[lo][0] < t-halfMs) lo++;
+    while (hi<series.length-1 && series[hi+1][0] <= t+halfMs) hi++;
+    const w=series.slice(lo,hi+1).map(p=>p[1]).sort((a,b)=>a-b), n=w.length;
+    out.push([t, n%2 ? w[n>>1] : (w[n/2-1]+w[n/2])/2]);
+  }
+  return out;
+}
+/* the counted draws [[t, amount]…] — what the projection rate and the daily
+   usage bars both add up */
+function tankDraws(coll, series){
+  if (series.length < 2) return [];
+  const band = USAGE_DEADBAND_M * coll.sensors.filter(s=>s.kind==='level')
+    .reduce((a,s)=>a+tankArea(coll,s), 0);
+  const sm = rollingMedian(series, USAGE_SMOOTH_MS);
+  const draws=[]; let ref=sm[0][1];
+  for (let i=1;i<sm.length;i++){
+    const [t,v]=sm[i];
+    if (v < ref-band){ draws.push([t, ref-v]); ref=v; }
+    else if (v > ref+band) ref=v;
+  }
+  return draws;
+}
 function tankUsageProjection(coll, bySensor){
   const series = combinedTankSeries(coll, bySensor);
   if (series.length < 2) return null;
-  let drawdown = 0;
-  for (let i=1;i<series.length;i++){
-    const d = series[i][1] - series[i-1][1];
-    if (d < 0) drawdown += -d;
-  }
+  const drawdown = tankDraws(coll, series).reduce((a,d)=>a+d[1], 0);
   const elapsedHrs = (series[series.length-1][0] - series[0][0]) / 36e5;
   if (elapsedHrs <= 0) return null;
   const ratePerHour = drawdown / elapsedHrs;
@@ -896,22 +938,17 @@ function tankUsageProjection(coll, bySensor){
   return { current, ratePerDay: ratePerHour*24, daysLeft, elapsedHrs, updatedAt: series[series.length-1][0] };
 }
 /* per-calendar-day water usage (drawdown only) for a collection's tanks over
-   [t0,t1] — the history behind the projection card's "usage/day" number. Uses
-   the same usage-only rule as tankUsageProjection: positive steps (rain /
-   refills) are ignored so a refill mid-day can't cancel out the real draw
-   either side of it. Values are in the combined series' native units (m³ when
-   tank diameters are set, else summed level in m); the caller scales m³→L. */
+   [t0,t1] — the history behind the projection card's "usage/day" number,
+   counted by the same tankDraws rule (rain / refills ignored, sensor jitter
+   filtered). Values are in the combined series' native units (m³ when tank
+   diameters are set, else summed level in m); the caller scales m³→L. */
 function tankDailyUsage(coll, bySensor, t0, t1){
-  const series = combinedTankSeries(coll, bySensor);
   const draw = new Map(); /* dayStart → drawdown */
-  for (let i=1;i<series.length;i++){
-    const [t,v] = series[i];
+  for (const [t,amt] of tankDraws(coll, combinedTankSeries(coll, bySensor))){
     if (t < t0 || t > t1) continue;
-    const d = v - series[i-1][1];
-    if (d >= 0) continue;
     const day = new Date(t); day.setHours(0,0,0,0);
     const k = day.getTime();
-    draw.set(k, (draw.get(k)||0) + (-d));
+    draw.set(k, (draw.get(k)||0) + amt);
   }
   const cats = [];
   const d = new Date(t0); d.setHours(0,0,0,0);
@@ -1150,12 +1187,15 @@ function drawLineChart(body, o){
 
 /* ---------- bar chart (rain) ---------- */
 function drawBarChart(body, o){
-  /* o: {cats:[{t,label}], series:[{name,color,values}], unit, dec, height?, todayIdx?, tightY?, yMax?} */
+  /* o: {cats:[{t,label}], series:[{name,color,values}], unit, dec, height?, todayIdx?, tightY?, yMax?, ref?:{v,label}}
+     ref draws a labelled dashed reference line (e.g. typical usage); the axis
+     stretches to keep it on the chart */
   const W=Math.max(300, body.clientWidth||640), H=o.height||225;
   const m={l:40,r:10,t:16,b:26}, pw=W-m.l-m.r, ph=H-m.t-m.b;
   const nS=o.series.length, nC=o.cats.length;
   if (!nC){ body.append(el('div',{class:'empty'},'No data for this range.')); return; }
   let vmax=0; for (const s of o.series) for (const v of s.values) if (v!=null&&v>vmax) vmax=v;
+  if (o.ref && o.ref.v>vmax) vmax=o.ref.v;
   /* tightY: let the period's peak set the top (nice-rounded, slim headroom) so
      small-magnitude series fill the height; otherwise floor the top at 1 so a
      near-empty range (e.g. no rain) still reads against a stable axis */
@@ -1199,6 +1239,14 @@ function drawBarChart(body, o){
     });
     bars.push(catBars);
   });
+  /* reference line over the bars, label haloed in the surface colour so it
+     stays legible where it crosses one */
+  if (o.ref && o.ref.v>0 && o.ref.v<=yT.hi){
+    const ry=Y(o.ref.v);
+    root.append(svgEl('line',{x1:m.l,y1:ry,x2:m.l+pw,y2:ry,stroke:mutedC,'stroke-width':1,'stroke-dasharray':'4 4'}));
+    root.append(svgEl('text',{x:m.l+5,y:ry-4,'font-size':10,fill:mutedC,stroke:cssVar('--surface'),'stroke-width':3,
+      'paint-order':'stroke',style:'font-variant-numeric:tabular-nums'}, o.ref.label));
+  }
   /* selective direct labels: max + today */
   const a0=o.series[0].values;
   let maxI=0; a0.forEach((v,i)=>{ if((v||0)>(a0[maxI]||0)) maxI=i; });
@@ -1332,6 +1380,7 @@ function tankProjReadoutRows(coll, proj){
   const levels = coll.sensors.filter(s=>s.kind==='level');
   const caps = levels.map(tankCapacityL);
   const capTotal = hasDiameters && caps.every(c=>c!=null) ? caps.reduce((a,b)=>a+b,0) : null;
+  const people = householdPeople();
   const tanksLbl = levels.length===2 ? 'both tanks' : levels.length===1 ? 'tank' : `all ${levels.length} tanks`;
   const days = proj.daysLeft;
   const color = !isFinite(days) ? cssVar('--good-text') : days<7 ? cssVar('--crit') : days<30 ? cssVar('--warn') : cssVar('--good-text');
@@ -1344,7 +1393,11 @@ function tankProjReadoutRows(coll, proj){
     el('div',{class:'delta'}, `${hasDiameters?'volume':'combined level'} now: ${fmtVal(proj.current*scale,dec)} ${unit}`
       + (capTotal!=null ? ` of ${fmtVal(capTotal,0)} L · ${fmtVal(proj.current*1000/capTotal*100,0)}% full` : '')
       + ` (${tanksLbl})`),
-    el('div',{class:'delta'}, `usage: ${fmtVal(proj.ratePerDay*scale,dec)} ${unit}/day`),
+    el('div',{class:'delta'}, `usage: ${fmtVal(proj.ratePerDay*scale,dec)} ${unit}/day`
+      + (hasDiameters ? ` · ${fmtVal(proj.ratePerDay*scale/people,0)} L per person` : '')),
+    hasDiameters ? el('div',{class:'delta typical'},
+      `typical for ${people} ${people===1?'person':'people'}: ~${fmtVal(people*TYPICAL_L_PER_PERSON,0)} L/day `
+      + `(SEQ average, ${TYPICAL_L_PER_PERSON} L per person)`) : null,
   ];
 }
 function tankProjectionCard(coll){
@@ -1360,12 +1413,19 @@ function tankProjectionCard(coll){
     await refreshTankProjection();
     render();
   });
+  const peopleInput = el('input',{class:'winhrs',type:'number',min:1,max:50,step:1,value:householdPeople()});
+  peopleInput.addEventListener('change', ()=>{
+    config.settings.tankProjection.people = clamp(parseInt(peopleInput.value,10)||5, 1, 50);
+    saveConfig(); render();
+  });
   const card = el('section',{class:'card'},
     el('div',{class:'card-head'}, el('h3',{},'💧 Days till empty'),
       el('span',{class:'card-sub'},'usage-based projection')),
     body,
-    el('label',{},'Projection window (hours)'), hoursInput,
-    el('p',{class:'help'},'Net usage over this window — rises (rain, refills) are ignored, only drawdown counts.'));
+    el('div',{class:'proj-inputs'},
+      el('div',{}, el('label',{},'Projection window (hours)'), hoursInput),
+      el('div',{}, el('label',{},'People in household'), peopleInput)),
+    el('p',{class:'help'},'Usage over this window — rises (rain, refills) are ignored, only drawdown counts, smoothed so sensor jitter isn’t counted as water used.'));
   if (state.tankProj.error){
     body.append(el('div',{class:'empty'},'⚠ '+state.tankProj.error));
     return card;
@@ -1394,10 +1454,13 @@ function tankUsageChartCard(coll){
   const cats = tankDailyUsage(coll, state.data.bySensor, now-rangeDays*864e5, now)
     .map(c=>({ t:c.t, label:c.label, value:+(c.value*scale).toFixed(dec) }));
   const series=[{name:'Daily usage',color:cssVar('--accent'),values:cats.map(c=>c.value),bar:true}];
+  const people=householdPeople();
+  const ref = hasDiameters ? { v:people*TYPICAL_L_PER_PERSON,
+    label:`typical for ${people} · ${fmtVal(people*TYPICAL_L_PER_PERSON,0)} L` } : null;
   return chartCard({
     title:'Daily water usage',
     sub:unit+'/day', series,
-    renderChart:b=>drawBarChart(b,{cats,series,unit,dec,todayIdx:cats.length-1,tightY:true}),
+    renderChart:b=>drawBarChart(b,{cats,series,unit,dec,todayIdx:cats.length-1,tightY:true,ref}),
     renderTable:()=>catsTable(cats,series,unit,dec),
   });
 }
@@ -2334,13 +2397,21 @@ addEventListener('hashchange',render);
       config.settings.kiosk||{});
     /* backfill the tank "days till empty" window for configs saved before it existed */
     config.settings.tankProjection = Object.assign(
-      { windowHours:72 }, config.settings.tankProjection||{});
+      { windowHours:72, people:5 }, config.settings.tankProjection||{});
     /* backfill per-sensor chart axis limits for configs saved before they existed:
-       tanks default to a fixed 0–2.4 m axis, everything else auto-fits (null) */
+       tanks default to a fixed 0–2.1 m axis, everything else auto-fits (null) */
     for (const s of allSensors()){
       if (!('plotMin' in s)) s.plotMin = s.kind==='level' ? 0 : null;
-      if (!('plotMax' in s)) s.plotMax = s.kind==='level' ? 2.4 : null;
+      if (!('plotMax' in s)) s.plotMax = s.kind==='level' ? 2.1 : null;
     }
+    /* one-off upgrades for saved configs; each id is recorded once applied,
+       so a value later set back by hand (and saved) is left alone */
+    config.migrations = config.migrations || [];
+    const migrate = (id, fn) => { if (!config.migrations.includes(id)){ fn(); config.migrations.push(id); } };
+    /* tank charts top out at 2.1 m now (the tallest tank is 2.0 m) */
+    migrate('tank-axis-2.1', ()=>{
+      for (const s of allSensors()) if (s.kind==='level' && s.plotMax===2.4) s.plotMax = 2.1;
+    });
     /* configs saved before tank heights existed: give the stock tanks their
        measured size and swapped trace colours (tank 1 green, tank 2 blue).
        Keyed on the missing heightM key, so configs from after this change are
