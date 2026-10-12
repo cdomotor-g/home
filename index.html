@@ -114,6 +114,8 @@ nav.tabs a.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600
 .tile .val{font-size:1.45rem;font-weight:600;margin:2px 0 0}
 .tile .val .unit{font-size:.8rem;font-weight:400;color:var(--muted);margin-left:3px}
 .tile .minmax{font-size:.72rem;color:var(--muted);margin-top:1px}
+.tile .vol{font-size:.8rem;color:var(--ink2);margin-top:1px}
+.tile .vol strong{color:var(--ink);font-weight:600}
 .tile .delta{font-size:.75rem;color:var(--ink2);margin-top:1px}
 .tile .delta.up{color:var(--good-text)} .tile .delta.down{color:var(--crit)}
 .tile .delta.day{color:var(--muted)}
@@ -224,6 +226,7 @@ table.data td{padding:4px 10px;text-align:right;font-variant-numeric:tabular-num
 #kiosk .k-num .tile .lbl{font-size:.9rem}
 #kiosk .k-num .tile .val{font-size:2.1rem}
 #kiosk .k-num .tile .minmax,#kiosk .k-num .tile .delta,#kiosk .k-num .tile .status{font-size:.9rem}
+#kiosk .k-num .tile .vol{font-size:1.05rem}
 #kiosk .k-daycard{margin:auto;max-width:820px;width:100%}
 #kiosk .k-daycard .proj-days{font-size:3.6rem}
 #kiosk .k-daycard .proj-days .unit{font-size:1.1rem}
@@ -348,15 +351,15 @@ function defaultConfig(){
       forceDemo: false,
       kiosk: { dwellSec:12, loop:true, shuffle:false, fullscreen:true, autostart:false, hidden:[], showValues:false, showDays:false },
       /* "days till empty" projection for tank (kind:'level') sensors — the window is
-         user-configurable from the projection card. diameterM lives per-sensor (below)
-         so the calculation can move from "assume equal" to real per-tank volumes
-         later without any code changes — see tankArea(). */
+         user-configurable from the projection card. diameterM / heightM live
+         per-sensor (below): diameter turns level into litres (see tankArea()),
+         height is the full-tank level, giving capacity and % full. */
       tankProjection: { windowHours: 72 },
     },
     collections: [
       { id:'water', name:'Water tanks', icon:'💧', sensors:[
-          { id:'tank1', name:'Tank 1', unit:'m', kind:'level', field:1, slot:1, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.4, forecastKey:'', diameterM:null },
-          { id:'tank2', name:'Tank 2', unit:'m', kind:'level', field:2, slot:2, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.4, forecastKey:'', diameterM:null },
+          { id:'tank1', name:'Tank 1', unit:'m', kind:'level', field:1, slot:2, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.4, forecastKey:'', diameterM:2.6, heightM:1.8 },
+          { id:'tank2', name:'Tank 2', unit:'m', kind:'level', field:2, slot:1, decimals:2, min:0.3, max:null, plotMin:0, plotMax:2.4, forecastKey:'', diameterM:3, heightM:2 },
         ], controls:[] },
       { id:'weather', name:'Weather station', icon:'🌦️', sensors:[
           { id:'rain', name:'Rain gauge', unit:'mm', kind:'rain', field:3, slot:1, decimals:1, min:null, max:null, forecastKey:'precipitation' },
@@ -453,7 +456,7 @@ function n01(seed){ const x = Math.sin(seed*127.1 + 311.7) * 43758.5453; return 
 function genDemoRows(days, extraDays){
   const step = 15*60000, now = Date.now();
   const start = now - days*864e5, end = now + extraDays*864e5;
-  let tank1 = 2.42, tank2 = 1.65;
+  let tank1 = 1.55, tank2 = 1.30;
   const rows = [];
   for (let t = start; t <= end; t += step){
     const k = Math.floor(t/step), d = new Date(t);
@@ -467,8 +470,8 @@ function genDemoRows(days, extraDays){
     const batt  = 12.15 + (diurnal>0 ? 1.35*diurnal : 0.05*diurnal) + (n01(k+9)-.5)*.06;
     const storm = n01(day+42) > 0.72 && h>13 && h<19 && n01(k+11) > 0.62;
     const rain  = storm ? +(n01(k+13)*1.9).toFixed(1) : 0;
-    tank1 = clamp(tank1 - 0.0011 + rain*0.004 , 0.25, 2.95);
-    tank2 = clamp(tank2 - 0.0007 + rain*0.0032, 0.20, 2.45);
+    tank1 = clamp(tank1 - 0.0011 + rain*0.004 , 0.25, 1.78);
+    tank2 = clamp(tank2 - 0.0007 + rain*0.0032, 0.20, 1.98);
     /* demo ESP32 LPU (mushroom house): a controlled space, so values hug their setpoints */
     const mushT  = 20.8 + 0.9*Math.sin(t/36e5/4*2*Math.PI) + 0.5*diurnal + (n01(k+17)-.5)*.6;
     const mushRH = clamp(88 + 3.5*Math.sin(t/36e5/6*2*Math.PI) + (n01(k+19)-.5)*3, 70, 99);
@@ -823,7 +826,8 @@ function medianStep(pts){
    days-till-empty ratio — the result is identical however wide that assumed
    diameter really is. Once a tank's real diameterM is entered (Manage → edit
    sensor), it's used in place of the shared assumption, and mixed known/unknown
-   tanks fall back to the average of the known ones — no other code changes. */
+   tanks fall back to the average of the known ones — no other code changes.
+   heightM (the full-tank level) adds capacity and % full on top. */
 function tankProjectionWindowHours(){
   const tp = config.settings.tankProjection || {};
   return clamp(Math.round(nz(tp.windowHours, 72)), 1, 24*30);
@@ -838,6 +842,16 @@ function tankDiameterFor(coll, s){
 function tankArea(coll, s){
   const d = tankDiameterFor(coll, s);
   return d!=null ? Math.PI/4*d*d : 1; /* neutral, uniform "unit area" while no diameter is known anywhere */
+}
+/* per-tank readouts (tiles, chart tooltips) use only the tank's own geometry —
+   no borrowed neighbour diameter, so a litre figure is never a guess.
+   Level is in metres: area (m²) × 1000 = litres per metre of level. */
+function tankLitresPerM(s){
+  return (s.kind==='level' && s.diameterM!=null && s.diameterM>0) ? Math.PI/4*s.diameterM*s.diameterM*1000 : null;
+}
+function tankCapacityL(s){
+  const lpm = tankLitresPerM(s);
+  return (lpm!=null && s.heightM!=null && s.heightM>0) ? lpm*s.heightM : null;
 }
 /* one combined volume series for a collection's tanks, sampled on the timestamps
    of whichever tank has the most points; other tanks are matched by nearest time
@@ -1017,7 +1031,9 @@ addEventListener('resize', repaintCharts);
 
 /* ---------- line chart ---------- */
 function drawLineChart(body, o){
-  /* o: {series:[{name,color,points,dash,wash}], unit, dec, height?, now?, includeZero?, yMin?, yMax?} */
+  /* o: {series:[{name,color,points,dash,wash,lpm?,fullAt?}], unit, dec, height?, now?, includeZero?, yMin?, yMax?}
+     lpm (tank litres per metre of level) adds a volume readout beside the level;
+     fullAt (the tank's height) draws a "full" reference line */
   const live = o.series.filter(s => s.points && s.points.length);
   if (!live.length){ body.append(el('div',{class:'empty'},'No data yet — sensor not reporting for this range.')); return; }
   const W = Math.max(300, body.clientWidth||640), H = o.height||235;
@@ -1059,6 +1075,14 @@ function drawLineChart(body, o){
     root.append(svgEl('line',{x1:X(o.now),y1:m.t,x2:X(o.now),y2:m.t+ph,stroke:axisC,'stroke-width':1}));
     root.append(svgEl('text',{x:X(o.now)+4,y:m.t+9,'font-size':9,fill:mutedC},'now'));
   }
+  /* full-tank reference: a dashed threshold at the tank's height, labelled at the
+     left so it stays clear of the endpoint label on the right */
+  if (live.length===1 && live[0].fullAt!=null && live[0].fullAt>=yT.lo && live[0].fullAt<=yT.hi){
+    const s=live[0], fy=Y(s.fullAt);
+    root.append(svgEl('line',{x1:m.l,y1:fy,x2:m.l+pw,y2:fy,stroke:mutedC,'stroke-width':1,'stroke-dasharray':'4 4'}));
+    root.append(svgEl('text',{x:m.l+5,y:fy-4,'font-size':10,fill:mutedC,style:'font-variant-numeric:tabular-nums'},
+      `full ${fmtVal(s.fullAt,o.dec)} ${o.unit}`+(s.lpm!=null?` · ${fmtVal(s.fullAt*s.lpm,0)} L`:'')));
+  }
   /* series — clipped to the plot area so pinned axis limits hold */
   const clipId=`plotclip${++clipSeq}`;
   root.append(svgEl('clipPath',{id:clipId},svgEl('rect',{x:m.l,y:m.t-6,width:pw+6,height:ph+6})));
@@ -1077,10 +1101,18 @@ function drawLineChart(body, o){
     plot.append(svgEl('circle',{cx:X(last[0]),cy:Y(last[1]),r:4.5,fill:s.color,stroke:surface,'stroke-width':2}));
     /* selective direct label: the endpoint only */
     if (live.length<=4){
-      const lx=Math.min(X(last[0])+7, m.l+pw-4);
-      root.append(svgEl('text',{x:lx,y:clamp(Y(last[1])-7,m.t+9,m.t+ph-4),'font-size':10,'font-weight':600,
-        fill:cssVar('--ink2'),'text-anchor':lx>m.l+pw-40?'end':'start',
-        style:'font-variant-numeric:tabular-nums'}, fmtVal(last[1],o.dec)));
+      const lx=Math.min(X(last[0])+7, m.l+pw-4), atEnd=lx>m.l+pw-40;
+      const txt=fmtVal(last[1],o.dec)+(s.lpm!=null?` ${o.unit} · ${fmtVal(last[1]*s.lpm,0)} L`:'');
+      /* a right-anchored label runs back over the line — set it underneath
+         when the line passes through the spot above the endpoint */
+      const tw=txt.length*5.8, ly=Y(last[1]);
+      const hits=base=>s.points.some(p=>{ const px=X(p[0]), py=Y(p[1]);
+        return px>=lx-tw && px<=lx && py>=base-12 && py<=base+3; });
+      let base=ly-7;
+      if (atEnd && hits(base) && !hits(ly+16)) base=ly+16;
+      root.append(svgEl('text',{x:lx,y:clamp(base,m.t+9,m.t+ph-4),'font-size':10,'font-weight':600,
+        fill:cssVar('--ink2'),'text-anchor':atEnd?'end':'start',
+        style:'font-variant-numeric:tabular-nums'}, txt));
     }
   }
   /* crosshair + hover layer */
@@ -1094,7 +1126,9 @@ function drawLineChart(body, o){
     cross.setAttribute('visibility','visible');
     const rows = live.map((s,i)=>{
       const v = valueAt(s.points, t, tols[i]);
-      return { color:s.color, dash:s.dash, name:s.name, val: v==null?'–':fmtVal(v,o.dec)+(o.unit?' '+o.unit:'') };
+      let val = v==null?'–':fmtVal(v,o.dec)+(o.unit?' '+o.unit:'');
+      if (v!=null && s.lpm!=null) val += ` · ${fmtVal(v*s.lpm,0)} L`+(s.fullAt?` · ${fmtVal(v/s.fullAt*100,0)}%`:'');
+      return { color:s.color, dash:s.dash, name:s.name, val };
     });
     showTip(cx, cy, tipNode(fmtFull(t), rows));
   }
@@ -1200,11 +1234,14 @@ function seriesTable(series, unit, dec){
     let r=map.get(t); if (!r){ r=new Array(series.length).fill(null); map.set(t,r); } r[i]=v; }});
   const times=[...map.keys()].sort((a,b)=>b-a);
   const shown=times.slice(0,400);
+  /* one column per series, plus a litres twin for tanks with a known diameter */
+  const cols=series.flatMap((s,i)=>[
+    {h:`${s.name}${unit?` (${unit})`:''}`, f:r=>fmtVal(r[i],dec)},
+    s.lpm!=null ? {h:`${s.name} (L)`, f:r=>r[i]==null?'–':fmtVal(r[i]*s.lpm,0)} : null].filter(Boolean));
   const tbl=el('table',{class:'data'},
-    el('thead',{}, el('tr',{}, el('th',{},'Time'),
-      series.map(s=>el('th',{}, `${s.name}${unit?` (${unit})`:''}`)))),
+    el('thead',{}, el('tr',{}, el('th',{},'Time'), cols.map(c=>el('th',{}, c.h)))),
     el('tbody',{}, shown.map(t=>el('tr',{}, el('td',{}, fmtFull(t)),
-      map.get(t).map(v=>el('td',{}, fmtVal(v,dec)))))));
+      cols.map(c=>el('td',{}, c.f(map.get(t))))))));
   const wrapEl=el('div',{}, el('div',{class:'tbl-wrap'}, tbl));
   if (times.length>shown.length) wrapEl.append(el('p',{class:'help'},`Showing latest ${shown.length} of ${times.length} rows.`));
   return wrapEl;
@@ -1265,6 +1302,18 @@ function renderSrcBadge(){
     b.append(el('span',{class:'badge demo',title:'No ThingSpeak channel configured — showing generated demo data for every LPU. Set your channel in Settings.'},'◌ demo data'));
 }
 function sensorColor(s){ return cssVar('--s'+(clamp(s.slot||1,1,8))); }
+/* the trace colour picker in Manage — names for the --s1…--s8 palette slots */
+const SLOT_COLORS = [
+  {v:1,l:'Blue'},{v:2,l:'Sea green'},{v:3,l:'Amber'},{v:4,l:'Green'},
+  {v:5,l:'Violet'},{v:6,l:'Red'},{v:7,l:'Pink'},{v:8,l:'Orange'},
+];
+/* line-chart series for sensors sharing one chart (dashboard + carousel);
+   tanks carry their litres-per-metre and height for the volume readouts */
+function sensorSeries(ss){
+  return ss.map(s=>({name:s.name, color:sensorColor(s),
+    points:state.data.bySensor.get(s.id)||[], wash:ss.length===1,
+    lpm:tankLitresPerM(s), fullAt:(s.kind==='level' && s.heightM>0) ? s.heightM : null}));
+}
 function collIcon(coll){
   /* a pasted/uploaded image (data URI in config) beats the emoji */
   return coll.iconImg ? el('img',{class:'cicon', src:coll.iconImg, alt:''})
@@ -1280,6 +1329,10 @@ function tankProjReadoutRows(coll, proj){
   const unit = hasDiameters ? 'L' : levelUnit;
   const scale = hasDiameters ? 1000 : 1; /* m³ (area in m² × height in m) → L */
   const dec = hasDiameters ? 0 : 2;
+  const levels = coll.sensors.filter(s=>s.kind==='level');
+  const caps = levels.map(tankCapacityL);
+  const capTotal = hasDiameters && caps.every(c=>c!=null) ? caps.reduce((a,b)=>a+b,0) : null;
+  const tanksLbl = levels.length===2 ? 'both tanks' : levels.length===1 ? 'tank' : `all ${levels.length} tanks`;
   const days = proj.daysLeft;
   const color = !isFinite(days) ? cssVar('--good-text') : days<7 ? cssVar('--crit') : days<30 ? cssVar('--warn') : cssVar('--good-text');
   return [
@@ -1288,7 +1341,9 @@ function tankProjReadoutRows(coll, proj){
         isFinite(days) ? fmtVal(Math.min(days,999),1) : '—',
         el('span',{class:'unit'}, isFinite(days) ? ' days' : ' steady — no net usage in this window')),
       isFinite(days) ? el('span',{class:'proj-date'}, fmtProjDate(proj.updatedAt + days*864e5)) : null),
-    el('div',{class:'delta'}, `${hasDiameters?'volume':'combined level'} now: ${fmtVal(proj.current*scale,dec)} ${unit} (both tanks)`),
+    el('div',{class:'delta'}, `${hasDiameters?'volume':'combined level'} now: ${fmtVal(proj.current*scale,dec)} ${unit}`
+      + (capTotal!=null ? ` of ${fmtVal(capTotal,0)} L · ${fmtVal(proj.current*1000/capTotal*100,0)}% full` : '')
+      + ` (${tanksLbl})`),
     el('div',{class:'delta'}, `usage: ${fmtVal(proj.ratePerDay*scale,dec)} ${unit}/day`),
   ];
 }
@@ -1365,8 +1420,15 @@ function sensorTile(s){
     if (mm) tile.append(el('div',{class:'minmax'},
       `min ${fmtVal(mm.min,nz(s.decimals,1))} · max ${fmtVal(mm.max,nz(s.decimals,1))} ${s.unit} (${state.range})`));
   } else {
+    const lpm=tankLitresPerM(s), cap=tankCapacityL(s);
+    /* level changes read in litres once the tank's diameter is known */
+    const chg=dv=>lpm!=null ? `${fmtVal(Math.abs(dv)*lpm,0)} L` : fmtVal(Math.abs(dv),nz(s.decimals,2));
     tile.append(el('div',{class:'lbl'},s.name),
       el('div',{class:'val'}, last?fmtVal(last[1],nz(s.decimals,2)):'–', el('span',{class:'unit'},s.unit)));
+    /* tanks: what that level holds, right under it */
+    if (last && lpm!=null) tile.append(el('div',{class:'vol',title:cap!=null?`capacity ${fmtVal(cap,0)} L`:null},
+      el('strong',{}, fmtVal(last[1]*lpm,0)+' L'),
+      cap!=null ? ` · ${fmtVal(last[1]/s.heightM*100,0)}% full` : null));
     const mm=minMaxOf(pts);
     if (mm) tile.append(el('div',{class:'minmax'},
       `min ${fmtVal(mm.min,nz(s.decimals,2))} · max ${fmtVal(mm.max,nz(s.decimals,2))} ${s.unit} (${state.range})`));
@@ -1376,14 +1438,14 @@ function sensorTile(s){
         const d=last[1]-prev;
         const cls = s.kind==='voltage' ? (d>=0?'up':'down') : '';
         tile.append(el('div',{class:'delta '+cls},
-          `${d>=0?'▲':'▼'} ${fmtVal(Math.abs(d),nz(s.decimals,2))} vs 24 h ago`));
+          `${d>=0?'▲':'▼'} ${chg(d)} vs 24 h ago`));
       }
       if (s.kind==='level'){
         const base=dayBaseline(pts);
         if (base!=null){
           const dd=last[1]-base;
           tile.append(el('div',{class:'delta day'},
-            `${dd>=0?'▲':'▼'} ${fmtVal(Math.abs(dd),nz(s.decimals,2))} today (since midnight)`));
+            `${dd>=0?'▲':'▼'} ${chg(dd)} today (since midnight)`));
         }
       }
       if (s.min!=null&&last[1]<s.min) tile.append(el('div',{class:'status',style:`color:${cssVar('--crit')}`},'⚠ below min'));
@@ -1440,8 +1502,7 @@ function renderDashboard(){
     for (const s of rest){ const k = s.kind==='level' ? `s:${s.id}` : (s.unit||'?'); if(!byGroup.has(k))byGroup.set(k,[]); byGroup.get(k).push(s); }
     for (const [,ss] of byGroup){
       const unit=ss[0].unit;
-      const series=ss.map(s=>({name:s.name,color:sensorColor(s),
-        points:state.data.bySensor.get(s.id)||[], wash:ss.length===1}));
+      const series=sensorSeries(ss);
       if (!series.some(s=>s.points.length) && ss.every(s=>!state.data.bySensor.get(s.id))) continue;
       const dec=nz(ss[0].decimals, nz(KIND_DEC[ss[0].kind], 1));
       grid.append(chartCard({
@@ -1575,8 +1636,10 @@ function renderManage(){
         el('span',{class:'dot',style:`background:${sensorColor(s)};width:9px;height:9px;border-radius:50%;display:inline-block`}),
         el('span',{class:'nm'},s.name),
         el('span',{class:'mi'},`${s.unit} · ${s.kind} · field ${s.field}${s.channelId?` @ch ${s.channelId}`:''}`),
-        (s.kind==='level'&&s.diameterM!=null)?el('span',{class:'mi'},`⌀ ${s.diameterM} m`):null,
-        (s.plotMin!=null||s.plotMax!=null)?el('span',{class:'mi'},`axis ${s.plotMin??'auto'}–${s.plotMax??'auto'}`):null,
+        (s.kind==='level'&&(s.diameterM!=null||s.heightM!=null))?el('span',{class:'mi'},
+          [s.diameterM!=null?`⌀ ${s.diameterM} m`:null, s.heightM!=null?`${s.heightM} m high`:null,
+           tankCapacityL(s)!=null?`${fmtVal(tankCapacityL(s),0)} L`:null].filter(Boolean).join(' · ')):null,
+        (s.plotMin!=null||s.plotMax!=null)?el('span',{class:'mi'},`axis ${nz(s.plotMin,'auto')}–${nz(s.plotMax,'auto')}`):null,
         fc&&fc.v?el('span',{class:'mi'},`↔ ${fc.l}`):null,
         el('div',{class:'spacer'}),
         el('button',{class:'ghost',onclick:()=>sensorForm(coll,s)},'Edit'),
@@ -1727,6 +1790,8 @@ function sensorForm(coll,s){
     {key:'kind',label:'Type',type:'select',options:KINDS.map(k=>({v:k,l:k}))},
     {key:'field',label:'ThingSpeak field (1–8)',type:'number',min:1,max:8,step:1},
     {key:'decimals',label:'Decimal places',type:'number',min:0,max:4,step:1},
+    {key:'slot',label:'Trace colour',type:'select',options:SLOT_COLORS,
+      help:'Line / bar colour for this sensor on every chart.'},
     {key:'min',label:'Alert below (optional)',type:'number',step:'any',help:'Tile shows a warning under this value.'},
     {key:'max',label:'Alert above (optional)',type:'number',step:'any'},
     {key:'plotMin',label:'Chart axis minimum (optional)',type:'number',step:'any',
@@ -1734,15 +1799,18 @@ function sensorForm(coll,s){
     {key:'plotMax',label:'Chart axis maximum (optional)',type:'number',step:'any',
       help:'Pins the top of this sensor’s chart (readings above it are clipped). Leave blank to fit the data.'},
     {key:'diameterM',label:'Tank diameter in metres (optional — level sensors only)',type:'number',step:'any',min:0,
-      help:'Used by the “days till empty” card to turn level into volume. Leave blank while tanks are assumed to share one diameter; once set per-tank, that card switches to real per-tank volumes automatically.'},
+      help:'Turns level into volume: litres on the tile, chart readouts, daily usage and “days till empty”. While blank, the days-till-empty card assumes tanks share one diameter.'},
+    {key:'heightM',label:'Tank height in metres (optional — level sensors only)',type:'number',step:'any',min:0,
+      help:'The level when the tank is full. With the diameter, gives capacity and % full, and marks “full” on the chart.'},
     {key:'forecastKey',label:'Forecast variable (Open-Meteo)',type:'select',options:FC_KEYS,
       help:'Map this to plot forecast vs actual on one chart.'},
     {key:'channelId',label:'Channel override (optional)',placeholder:'Leave blank to use the default channel',
       help:'Each LPU posts to its own channel — set this when the sensor lives on a different LPU than the default. Non-numeric values (e.g. demo-esp32) act as placeholders until that LPU is online.'},
     {key:'readKey',label:'Read key for that channel (optional)'},
-  ], s||{kind:'temperature',decimals:1}, out=>{
+  ], s||{kind:'temperature',decimals:1,slot:nextSlot(coll)}, out=>{
     if (!out.name||!out.field) return false;
     out.field=clamp(Math.round(out.field),1,8);
+    out.slot=clamp(parseInt(out.slot,10)||1,1,8);
     if (s) Object.assign(s,out);
     else coll.sensors.push(Object.assign({id:uid(),slot:nextSlot(coll)},out));
   });
@@ -1892,8 +1960,7 @@ function buildSlides(){
     for (const s of rest){ const k = s.kind==='level' ? `s:${s.id}` : (s.unit||'?'); if(!byGroup.has(k))byGroup.set(k,[]); byGroup.get(k).push(s); }
     for (const [gkey,ss] of byGroup){
       const unit=ss[0].unit;
-      const series=ss.map(s=>({name:s.name,color:sensorColor(s),
-        points:state.data.bySensor.get(s.id)||[], wash:ss.length===1}));
+      const series=sensorSeries(ss);
       const dec=nz(ss[0].decimals, nz(KIND_DEC[ss[0].kind], 1));
       slides.push({id:`${coll.id}|u|${gkey}`, group:coll.name,
         title: ss.length<=2 ? ss.map(s=>s.name).join(' & ') : `${coll.name} — ${unit}`,
@@ -2273,6 +2340,20 @@ addEventListener('hashchange',render);
     for (const s of allSensors()){
       if (!('plotMin' in s)) s.plotMin = s.kind==='level' ? 0 : null;
       if (!('plotMax' in s)) s.plotMax = s.kind==='level' ? 2.4 : null;
+    }
+    /* configs saved before tank heights existed: give the stock tanks their
+       measured size and swapped trace colours (tank 1 green, tank 2 blue).
+       Keyed on the missing heightM key, so configs from after this change are
+       left alone, and a diameter or colour already set by hand is kept. */
+    const STOCK_TANKS = { tank1:{diameterM:2.6, heightM:1.8, oldSlot:1, slot:2},
+                          tank2:{diameterM:3,   heightM:2,   oldSlot:2, slot:1} };
+    for (const s of allSensors()){
+      if (s.kind!=='level' || 'heightM' in s) continue;
+      const st = STOCK_TANKS[s.id];
+      s.heightM = st ? st.heightM : null;
+      if (!st) continue;
+      if (s.diameterM==null) s.diameterM = st.diameterM;
+      if (s.slot===st.oldSlot) s.slot = st.slot;
     }
     applyTheme();
     renderTabs();

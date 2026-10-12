@@ -37,21 +37,6 @@
           "unit": "m",
           "kind": "level",
           "field": 1,
-          "slot": 1,
-          "decimals": 2,
-          "min": 0.3,
-          "max": null,
-          "plotMin": 0,
-          "plotMax": 2.4,
-          "forecastKey": "",
-          "diameterM": null
-        },
-        {
-          "id": "tank2",
-          "name": "Tank 2",
-          "unit": "m",
-          "kind": "level",
-          "field": 2,
           "slot": 2,
           "decimals": 2,
           "min": 0.3,
@@ -59,7 +44,24 @@
           "plotMin": 0,
           "plotMax": 2.4,
           "forecastKey": "",
-          "diameterM": null
+          "diameterM": 2.6,
+          "heightM": 1.8
+        },
+        {
+          "id": "tank2",
+          "name": "Tank 2",
+          "unit": "m",
+          "kind": "level",
+          "field": 2,
+          "slot": 1,
+          "decimals": 2,
+          "min": 0.3,
+          "max": null,
+          "plotMin": 0,
+          "plotMax": 2.4,
+          "forecastKey": "",
+          "diameterM": 3,
+          "heightM": 2
         }
       ],
       "controls": []

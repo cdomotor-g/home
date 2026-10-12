@@ -206,17 +206,23 @@ channel override.
 
 - **Stat tiles** — latest reading per sensor with 24 h delta, a sparkline, and
   low/high alert thresholds (battery warns below 11.5 V out of the box).
+- **Tank volumes** — each tank's diameter and height live on its sensor
+  (Manage → edit sensor). Tank 1 is 2.6 m across × 1.8 m high (9,557 L) and
+  Tank 2 is 3.0 m × 2.0 m (14,137 L). With those set, the level stays the
+  headline but every readout pairs it with litres: the tile shows the volume
+  and % full (changes in L), the level chart's endpoint label, tooltip and
+  table add litres, and a dashed line marks the full level.
 - **Days till empty** — any collection with tank (level-type) sensors gets a
   projection card that extrapolates from *recent net usage* to estimate when
-  the combined tanks run dry. Usage is measured only from drawdown over a
+  the combined tanks run dry, plus the volume now against total capacity and
+  usage in L/day. Usage is measured only from drawdown over a
   user-configurable trailing window (72 h by default, editable right on the
   card); rises from rain or a refill are ignored rather than netted off, so a
-  storm mid-window can't mask real usage on either side of it. Today it
-  assumes every tank in the collection shares one diameter (the assumption
-  cancels out of the day-count math, so it's exact even though the true
-  diameter is unknown); set a real diameter per tank in Manage → edit sensor
-  once you know it, and the card switches to true per-tank volumes — mixed
-  known/unknown tanks fall back to the average of the known ones.
+  storm mid-window can't mask real usage on either side of it. A **daily water
+  usage** bar chart shows the same drawdown per calendar day, in litres. A tank
+  with no diameter set borrows the average of the known ones; with none known
+  at all, every tank is assumed to share one diameter (it cancels out of the
+  day count) and usage reads in metres of level instead of litres.
 - **Charts** — time-series per collection (sensors sharing a unit share an
   axis; nothing ever gets a second y-axis), rain as hourly/daily/weekly total
   bars, with crosshair tooltips, a table view on every chart, and
@@ -244,7 +250,8 @@ channel override.
   the carousel — ideal for a dedicated always-on monitor.
 - **Manage (CRUD)** — collections for areas/systems around the place (water,
   weather, mushroom house, hydroponics…), each holding **sensors** (name, unit,
-  type, ThingSpeak field, alert range, forecast mapping, optional per-sensor
+  type, trace colour, ThingSpeak field, alert range, chart axis limits, tank
+  diameter / height, forecast mapping, optional per-sensor
   channel override for sensors living on other LPUs) and **controls** (heater / cooler /
   fan / valve / humidifier / pump, linked sensor, auto/manual mode,
   **setpoint + deadband**, on-below or on-above behaviour). Every collection
