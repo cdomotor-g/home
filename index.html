@@ -911,25 +911,27 @@ function rollingMedian(series, halfMs){
   }
   return out;
 }
-/* the counted draws [[t, amount]…] — what the projection rate and the daily
-   usage bars both add up */
-function tankDraws(coll, series){
-  if (series.length < 2) return [];
+/* the counted draws and fills [[t, amount]…] — draws are what the projection
+   rate and the daily usage bars add up; fills are the rises past the band (rain,
+   refills) behind the daily collection bars. Usage carries on while it rains,
+   so a fill is net of whatever was drawn off during that rise. */
+function tankFlows(coll, series){
+  if (series.length < 2) return { draws:[], fills:[] };
   const band = USAGE_DEADBAND_M * coll.sensors.filter(s=>s.kind==='level')
     .reduce((a,s)=>a+tankArea(coll,s), 0);
   const sm = rollingMedian(series, USAGE_SMOOTH_MS);
-  const draws=[]; let ref=sm[0][1];
+  const draws=[], fills=[]; let ref=sm[0][1];
   for (let i=1;i<sm.length;i++){
     const [t,v]=sm[i];
     if (v < ref-band){ draws.push([t, ref-v]); ref=v; }
-    else if (v > ref+band) ref=v;
+    else if (v > ref+band){ fills.push([t, v-ref]); ref=v; }
   }
-  return draws;
+  return { draws, fills };
 }
 function tankUsageProjection(coll, bySensor){
   const series = combinedTankSeries(coll, bySensor);
   if (series.length < 2) return null;
-  const drawdown = tankDraws(coll, series).reduce((a,d)=>a+d[1], 0);
+  const drawdown = tankFlows(coll, series).draws.reduce((a,d)=>a+d[1], 0);
   const elapsedHrs = (series[series.length-1][0] - series[0][0]) / 36e5;
   if (elapsedHrs <= 0) return null;
   const ratePerHour = drawdown / elapsedHrs;
@@ -937,14 +939,15 @@ function tankUsageProjection(coll, bySensor){
   const daysLeft = ratePerHour > 0 ? current / (ratePerHour*24) : Infinity;
   return { current, ratePerDay: ratePerHour*24, daysLeft, elapsedHrs, updatedAt: series[series.length-1][0] };
 }
-/* per-calendar-day water usage (drawdown only) for a collection's tanks over
-   [t0,t1] — the history behind the projection card's "usage/day" number,
-   counted by the same tankDraws rule (rain / refills ignored, sensor jitter
-   filtered). Values are in the combined series' native units (m³ when tank
-   diameters are set, else summed level in m); the caller scales m³→L. */
-function tankDailyUsage(coll, bySensor, t0, t1){
-  const draw = new Map(); /* dayStart → drawdown */
-  for (const [t,amt] of tankDraws(coll, combinedTankSeries(coll, bySensor))){
+/* per-calendar-day water flow for a collection's tanks over [t0,t1], counted
+   by tankFlows (sensor jitter filtered). dir 'draws' is usage — the history
+   behind the projection card's "usage/day" number, rain / refills ignored;
+   dir 'fills' is water collected — the rises, usage ignored. Values are in the
+   combined series' native units (m³ when tank diameters are set, else summed
+   level in m); the caller scales m³→L. */
+function tankDailyFlow(coll, bySensor, t0, t1, dir){
+  const draw = new Map(); /* dayStart → amount */
+  for (const [t,amt] of tankFlows(coll, combinedTankSeries(coll, bySensor))[dir]){
     if (t < t0 || t > t1) continue;
     const day = new Date(t); day.setHours(0,0,0,0);
     const k = day.getTime();
@@ -1451,7 +1454,7 @@ function tankUsageChartCard(coll){
   const unit = hasDiameters ? 'L' : levelUnit;
   const scale = hasDiameters ? 1000 : 1; /* m³ → L */
   const dec = hasDiameters ? 0 : 2;
-  const cats = tankDailyUsage(coll, state.data.bySensor, now-rangeDays*864e5, now)
+  const cats = tankDailyFlow(coll, state.data.bySensor, now-rangeDays*864e5, now, 'draws')
     .map(c=>({ t:c.t, label:c.label, value:+(c.value*scale).toFixed(dec) }));
   const series=[{name:'Daily usage',color:cssVar('--accent'),values:cats.map(c=>c.value),bar:true}];
   const people=householdPeople();
@@ -1461,6 +1464,26 @@ function tankUsageChartCard(coll){
     title:'Daily water usage',
     sub:unit+'/day', series,
     renderChart:b=>drawBarChart(b,{cats,series,unit,dec,todayIdx:cats.length-1,tightY:true,ref}),
+    renderTable:()=>catsTable(cats,series,unit,dec),
+  });
+}
+/* daily water-collected bar chart — the usage chart's twin: the rises (rain,
+   refills) per calendar day, same units, with the period's total up top */
+function tankCollectionChartCard(coll){
+  const now=Date.now(), rangeDays=RANGES[state.range].days;
+  const hasDiameters = coll.sensors.some(s=>s.kind==='level' && s.diameterM!=null && s.diameterM>0);
+  const levelUnit = (coll.sensors.find(s=>s.kind==='level')||{}).unit || 'm';
+  const unit = hasDiameters ? 'L' : levelUnit;
+  const scale = hasDiameters ? 1000 : 1; /* m³ → L */
+  const dec = hasDiameters ? 0 : 2;
+  const cats = tankDailyFlow(coll, state.data.bySensor, now-rangeDays*864e5, now, 'fills')
+    .map(c=>({ t:c.t, label:c.label, value:+(c.value*scale).toFixed(dec) }));
+  const series=[{name:'Collected',color:cssVar('--s5'),values:cats.map(c=>c.value),bar:true}];
+  const total=cats.reduce((a,c)=>a+c.value,0);
+  return chartCard({
+    title:'Daily water collected',
+    sub:`${fmtVal(total,dec)} ${unit} in ${state.range}`, series,
+    renderChart:b=>drawBarChart(b,{cats,series,unit,dec,todayIdx:cats.length-1,tightY:true}),
     renderTable:()=>catsTable(cats,series,unit,dec),
   });
 }
@@ -1558,7 +1581,7 @@ function renderDashboard(){
     if (coll.camera && coll.camera.manifestUrl) grid.append(cameraCard(coll));
     if (coll.sensors.some(s=>s.kind==='level')) grid.append(tankProjectionCard(coll));
     if (coll.sensors.some(s=>s.kind==='level' && (state.data.bySensor.get(s.id)||[]).length))
-      grid.append(tankUsageChartCard(coll));
+      grid.append(tankUsageChartCard(coll), tankCollectionChartCard(coll));
     const rain=coll.sensors.filter(s=>s.kind==='rain');
     const rest=coll.sensors.filter(s=>s.kind!=='rain');
     const byGroup=new Map();

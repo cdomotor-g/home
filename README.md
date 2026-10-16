@@ -226,7 +226,12 @@ channel override.
   drawdown per calendar day, in litres. For context, both show what's typical
   for the household (people count is editable on the card, 5 by default): South
   East Queensland's residential average is ~160 L per person per day (Seqwater,
-  2026), drawn as a dashed line on the usage chart. A tank
+  2026), drawn as a dashed line on the usage chart. Its twin, a **daily water
+  collected** bar chart, counts the other side — the rises from rain or a
+  refill per calendar day, through the same smoothing and 3 mm deadband — in
+  litres, with the total for the selected range in its header. Usage carries
+  on while it rains, so collection is net of whatever was drawn off during the
+  rise. A tank
   with no diameter set borrows the average of the known ones; with none known
   at all, every tank is assumed to share one diameter (it cancels out of the
   day count) and usage reads in metres of level instead of litres.
