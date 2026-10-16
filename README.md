@@ -222,16 +222,16 @@ channel override.
   smoothed first (a ±2 h rolling median, then drops under 3 mm of level are
   ignored): the tank sensors jitter by ±2–3 mm between readings, and counting
   every downward wobble used to inflate usage roughly five-fold (~1,600 L/day
-  shown vs ~270 L/day real). A **daily water usage** bar chart shows the same
-  drawdown per calendar day, in litres. For context, both show what's typical
+  shown vs ~270 L/day real). A **water in & out** chart shows both sides per
+  calendar day, in litres, on one axis: water collected (rises from rain or a
+  refill, through the same smoothing and 3 mm deadband) as bars above the zero
+  line, the same drawdown as usage hanging below it. The legend carries each
+  side's total for the selected range, and the tooltip and table add the
+  day's net. Usage carries on while it rains, so collection is net of whatever
+  was drawn off during the rise. For context, both show what's typical
   for the household (people count is editable on the card, 5 by default): South
   East Queensland's residential average is ~160 L per person per day (Seqwater,
-  2026), drawn as a dashed line on the usage chart. Its twin, a **daily water
-  collected** bar chart, counts the other side — the rises from rain or a
-  refill per calendar day, through the same smoothing and 3 mm deadband — in
-  litres, with the total for the selected range in its header. Usage carries
-  on while it rains, so collection is net of whatever was drawn off during the
-  rise. A tank
+  2026), drawn as a dashed line on the usage side of the in & out chart. A tank
   with no diameter set borrows the average of the known ones; with none known
   at all, every tank is assumed to share one diameter (it cancels out of the
   day count) and usage reads in metres of level instead of litres.
